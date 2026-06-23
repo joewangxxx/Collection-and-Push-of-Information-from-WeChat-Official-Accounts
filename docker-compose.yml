@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: market-info-postgres
+    environment:
+      POSTGRES_DB: market_info
+      POSTGRES_USER: market_info
+      POSTGRES_PASSWORD: market_info
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  wechat-exporter:
+    image: ghcr.io/wechat-article/wechat-article-exporter:latest
+    container_name: wechat-article-exporter
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      NITRO_KV_DRIVER: fs
+      NITRO_KV_BASE: /app/.data/kv
+    ports:
+      - "3000:3000"
+    volumes:
+      - wechat_exporter_data:/app/.data
+
+volumes:
+  postgres_data:
+  wechat_exporter_data:

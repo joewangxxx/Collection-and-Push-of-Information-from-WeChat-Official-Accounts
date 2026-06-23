@@ -1,0 +1,4 @@
+accounts:
+  - name: "示例公众号"
+    fakeid: "replace_with_fakeid"
+    enabled: true
