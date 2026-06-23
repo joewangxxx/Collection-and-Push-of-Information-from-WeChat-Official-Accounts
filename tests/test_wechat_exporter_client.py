@@ -81,3 +81,18 @@ def test_download_text_rejects_empty_url() -> None:
 
     with pytest.raises(ValueError):
         client.download_text("")
+
+
+def test_http_client_ignores_environment_proxy(monkeypatch) -> None:
+    captured_kwargs = {}
+
+    class DummyClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+    monkeypatch.setattr("market_info.wechat.exporter_client.httpx.Client", DummyClient)
+    client = WechatExporterClient("http://localhost:3000", "test-auth-key")
+
+    client._client()
+
+    assert captured_kwargs["trust_env"] is False

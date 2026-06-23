@@ -95,6 +95,7 @@ class WechatExporterClient:
             base_url=self.base_url,
             headers=self._headers(),
             timeout=self.timeout,
+            trust_env=False,
         )
 
     def _headers(self) -> dict[str, str]:
