@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+config/accounts.yml
 
 .venv/
 venv/
