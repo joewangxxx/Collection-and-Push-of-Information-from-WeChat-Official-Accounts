@@ -314,7 +314,7 @@ def test_process_pending_articles_passes_max_articles_to_pending_query(monkeypat
     assert seen == [7]
 
 
-def test_process_pending_articles_skips_project_when_embedding_fails(
+def test_process_pending_articles_marks_article_failed_when_embedding_fails(
     monkeypatch,
     db_session,
 ) -> None:
@@ -351,7 +351,9 @@ def test_process_pending_articles_skips_project_when_embedding_fails(
 
     db_session.refresh(article)
     assert db_session.query(ProjectRecord).filter_by(source_article_id=article.id).count() == 0
-    assert article.processing_status == "processed"
+    assert article.processing_status == "failed"
+    assert article.extraction_attempts == 1
+    assert "embedding timeout" in article.extraction_error
     assert result.new_projects == 0
 
 
@@ -588,3 +590,94 @@ def test_worker_receives_article_snapshot_not_orm_object(
     assert outcome.success is True
     assert outcome.projects == []
     assert seen == [("title", "content")]
+
+
+def test_process_pending_articles_replays_database_writes_in_article_order(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    first_article = make_source_article("first")
+    second_article = make_source_article("second")
+    db_session.add_all([first_article, second_article])
+    db_session.flush()
+
+    first_project = ExtractedProject(
+        project_name="first project",
+        status="澶囨",
+        confidence=0.9,
+    )
+    second_project = ExtractedProject(
+        project_name="second project",
+        status="澶囨",
+        confidence=0.9,
+    )
+
+    def fake_process_article_ai(article_input, settings):
+        if article_input.title == "first":
+            time.sleep(0.05)
+            project = first_project
+        else:
+            project = second_project
+        return weekly_job.ArticleProcessingOutcome(
+            article_id=article_input.article_id,
+            success=True,
+            projects=[
+                weekly_job.ProjectExtractionOutput(
+                    extracted_project=project,
+                    semantic_text=project.project_name,
+                    embedding=[0.1] * 1536,
+                )
+            ],
+        )
+
+    write_order = []
+    monkeypatch.setattr(weekly_job, "_process_article_ai", fake_process_article_ai)
+    monkeypatch.setattr(
+        weekly_job,
+        "VectorSearch",
+        lambda session: SimpleNamespace(find_candidates=lambda embedding, province: []),
+    )
+
+    def fake_choose_best_match(candidates, rule_scores):
+        record = db_session.query(ProjectRecord).order_by(ProjectRecord.id.desc()).first()
+        write_order.append(record.project_name)
+        return MatchDecision(
+            decision="new",
+            final_score=0,
+            project_id=None,
+            rule_score=0,
+            vector_score=0,
+        )
+
+    monkeypatch.setattr(weekly_job, "choose_best_match", fake_choose_best_match)
+
+    result = weekly_job.process_pending_articles(db_session, make_settings())
+
+    assert result.new_projects == 2
+    assert write_order == ["first project", "second project"]
+
+
+def test_process_pending_articles_marks_worker_crash_failed(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    article = make_source_article("crash")
+    db_session.add(article)
+    db_session.flush()
+
+    def fake_process_article_ai(article_input, settings):
+        raise RuntimeError("worker crashed")
+
+    monkeypatch.setattr(weekly_job, "_process_article_ai", fake_process_article_ai)
+    monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
+
+    weekly_job.process_pending_articles(db_session, make_settings())
+
+    db_session.refresh(article)
+    assert article.processing_status == "failed"
+    assert article.extraction_attempts == 1
+    assert "worker crashed" in article.extraction_error

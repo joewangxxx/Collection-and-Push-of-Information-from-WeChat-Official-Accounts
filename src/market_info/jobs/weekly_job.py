@@ -235,79 +235,101 @@ def process_pending_articles(
         for article in articles
     ]
 
+    outcomes: dict[int, ArticleProcessingOutcome] = {}
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [
-            executor.submit(_process_article_ai, article_input, settings)
+        futures = {
+            executor.submit(_process_article_ai, article_input, settings): article_input
             for article_input in article_inputs
-        ]
-        for completed_count, future in enumerate(as_completed(futures), start=1):
-            outcome = future.result()
-            article = session.get(SourceArticle, outcome.article_id)
-            if article is None:
-                continue
-
-            article.extraction_attempts = (article.extraction_attempts or 0) + 1
-            if not outcome.success:
-                _mark_article_failed(article, outcome.error_message)
-                session.commit()
-                _emit_progress(
-                    progress_callback,
-                    f"completed {completed_count}/{total_articles}: "
-                    f"article_id={outcome.article_id} status=failed",
+        }
+        for future in as_completed(futures):
+            article_input = futures[future]
+            try:
+                outcome = future.result()
+            except Exception as exc:
+                outcome = ArticleProcessingOutcome(
+                    article_id=article_input.article_id,
+                    success=False,
+                    projects=[],
+                    error_message=_error_summary(exc),
                 )
-                continue
+            outcomes[outcome.article_id] = outcome
 
-            for project_output in outcome.projects:
-                extracted_project = project_output.extracted_project
+    for completed_count, article_input in enumerate(article_inputs, start=1):
+        outcome = outcomes.get(article_input.article_id)
+        if outcome is None:
+            outcome = ArticleProcessingOutcome(
+                article_id=article_input.article_id,
+                success=False,
+                projects=[],
+                error_message="AI worker did not return an outcome.",
+            )
 
-                record = ProjectRecord(
-                    source_article=article,
-                    project_name=extracted_project.project_name,
-                    project_info=extracted_project.project_info,
-                    province=extracted_project.province,
-                    city=extracted_project.city,
-                    detailed_address=extracted_project.detailed_address,
-                    company_name=extracted_project.company_name,
-                    investment_amount_yi=extracted_project.investment_amount_yi,
-                    industry=extracted_project.industry,
-                    field=extracted_project.field,
-                    market=extracted_project.market,
-                    status=extracted_project.status,
-                    confidence=extracted_project.confidence,
-                    semantic_text=project_output.semantic_text,
-                    embedding=project_output.embedding,
-                )
-                session.add(record)
-                session.flush()
+        article = session.get(SourceArticle, outcome.article_id)
+        if article is None:
+            continue
 
-                candidates = vector_search.find_candidates(
-                    project_output.embedding,
-                    extracted_project.province,
-                )
-                existing_projects = _load_candidate_projects(session, candidates)
-                rule_scores = {
-                    project.id: calculate_rule_score(record, project)
-                    for project in existing_projects
-                    if project.id is not None
-                }
-                decision = choose_best_match(candidates, rule_scores)
-                apply_match_decision(session, record, decision)
-
-                if decision.decision == "new":
-                    new_projects += 1
-                elif decision.decision == "merge":
-                    merged_projects += 1
-                elif decision.decision == "review":
-                    review_projects += 1
-
-            _mark_article_processed(article)
+        article.extraction_attempts = (article.extraction_attempts or 0) + 1
+        if not outcome.success:
+            _mark_article_failed(article, outcome.error_message)
             session.commit()
             _emit_progress(
                 progress_callback,
                 f"completed {completed_count}/{total_articles}: "
-                f"article_id={outcome.article_id} "
-                f"projects={len(outcome.projects)} status=processed",
+                f"article_id={outcome.article_id} status=failed",
             )
+            continue
+
+        for project_output in outcome.projects:
+            extracted_project = project_output.extracted_project
+
+            record = ProjectRecord(
+                source_article=article,
+                project_name=extracted_project.project_name,
+                project_info=extracted_project.project_info,
+                province=extracted_project.province,
+                city=extracted_project.city,
+                detailed_address=extracted_project.detailed_address,
+                company_name=extracted_project.company_name,
+                investment_amount_yi=extracted_project.investment_amount_yi,
+                industry=extracted_project.industry,
+                field=extracted_project.field,
+                market=extracted_project.market,
+                status=extracted_project.status,
+                confidence=extracted_project.confidence,
+                semantic_text=project_output.semantic_text,
+                embedding=project_output.embedding,
+            )
+            session.add(record)
+            session.flush()
+
+            candidates = vector_search.find_candidates(
+                project_output.embedding,
+                extracted_project.province,
+            )
+            existing_projects = _load_candidate_projects(session, candidates)
+            rule_scores = {
+                project.id: calculate_rule_score(record, project)
+                for project in existing_projects
+                if project.id is not None
+            }
+            decision = choose_best_match(candidates, rule_scores)
+            apply_match_decision(session, record, decision)
+
+            if decision.decision == "new":
+                new_projects += 1
+            elif decision.decision == "merge":
+                merged_projects += 1
+            elif decision.decision == "review":
+                review_projects += 1
+
+        _mark_article_processed(article)
+        session.commit()
+        _emit_progress(
+            progress_callback,
+            f"completed {completed_count}/{total_articles}: "
+            f"article_id={outcome.article_id} "
+            f"projects={len(outcome.projects)} status=processed",
+        )
 
     status_events_after = session.query(ProjectEvent).count()
     return ProcessingResult(
@@ -437,12 +459,19 @@ def _process_article_ai(
             )
         )
 
-    error_message = "; ".join(embedding_errors) if embedding_errors else None
+    if embedding_errors:
+        return ArticleProcessingOutcome(
+            article_id=article_input.article_id,
+            success=False,
+            projects=[],
+            error_message="; ".join(embedding_errors),
+        )
+
     return ArticleProcessingOutcome(
         article_id=article_input.article_id,
         success=True,
         projects=projects,
-        error_message=error_message,
+        error_message=None,
     )
 
 

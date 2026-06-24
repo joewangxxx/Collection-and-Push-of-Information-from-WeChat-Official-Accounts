@@ -3,7 +3,9 @@ from datetime import datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
+    Enum,
     Float,
     ForeignKey,
     Index,
@@ -16,6 +18,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from market_info.db.base import Base
+
+
+PROCESSING_STATUS_VALUES = ("pending", "processed", "failed")
+processing_status_type = Enum(
+    *PROCESSING_STATUS_VALUES,
+    name="source_article_processing_status",
+    native_enum=False,
+    validate_strings=True,
+    length=50,
+)
 
 
 class MpAccount(Base):
@@ -47,6 +59,10 @@ class SourceArticle(Base):
         Index("ix_source_articles_normalized_url", "normalized_url", unique=True),
         Index("ix_source_articles_content_hash", "content_hash"),
         Index("ix_source_articles_processing_status", "processing_status"),
+        CheckConstraint(
+            "processing_status in ('pending', 'processed', 'failed')",
+            name="ck_source_articles_processing_status",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -62,7 +78,7 @@ class SourceArticle(Base):
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     processing_status: Mapped[str] = mapped_column(
-        String(50),
+        processing_status_type,
         nullable=False,
         default="pending",
         server_default="pending",
