@@ -15,7 +15,6 @@ services:
     image: ghcr.io/wechat-article/wechat-article-exporter:latest
     container_name: wechat-article-exporter
     environment:
-      NODE_TLS_REJECT_UNAUTHORIZED: "0"
       NITRO_KV_DRIVER: fs
       NITRO_KV_BASE: /app/.data/kv
     ports:

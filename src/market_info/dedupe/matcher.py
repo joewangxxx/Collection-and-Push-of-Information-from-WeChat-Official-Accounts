@@ -142,9 +142,18 @@ def _apply_merge_decision(
     record.project = existing_project
     record.dedupe_decision = "merge"
     record.dedupe_score = decision.final_score
-    existing_project.last_seen_at = _record_event_date(record)
+    event_date = _record_event_date(record)
+    previous_last_seen_at = existing_project.last_seen_at
+    is_current_event = _is_at_least_as_recent(event_date, previous_last_seen_at)
+    if event_date is not None and (
+        previous_last_seen_at is None or event_date > previous_last_seen_at
+    ):
+        existing_project.last_seen_at = event_date
 
-    if _should_create_status_event(record.status, existing_project.current_status):
+    if is_current_event and _should_create_status_event(
+        record.status,
+        existing_project.current_status,
+    ):
         previous_status = existing_project.current_status
         event_status = record.status
         event = ProjectEvent(
@@ -152,7 +161,7 @@ def _apply_merge_decision(
             source_article_id=record.source_article_id,
             previous_status=previous_status,
             event_status=event_status,
-            event_date=_record_event_date(record),
+            event_date=event_date,
             change_label=f"{previous_status} -> {event_status}",
         )
         session.add(event)
@@ -167,6 +176,17 @@ def _record_event_date(record: ProjectRecord) -> datetime | None:
     if source_article is not None and source_article.published_at is not None:
         return source_article.published_at
     return record.created_at
+
+
+def _is_at_least_as_recent(
+    event_date: datetime | None,
+    current_last_seen_at: datetime | None,
+) -> bool:
+    if current_last_seen_at is None:
+        return True
+    if event_date is None:
+        return False
+    return event_date >= current_last_seen_at
 
 
 def _should_create_status_event(

@@ -15,9 +15,16 @@ from market_info.db.models import SourceArticle
 from market_info.db.session import get_session
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("--limit must be a positive integer")
+    return parsed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smoke test AI extraction from source_articles.")
-    parser.add_argument("--limit", type=int, default=3, help="Number of recent articles to extract.")
+    parser.add_argument("--limit", type=positive_int, default=3, help="Number of recent articles to extract.")
     return parser.parse_args()
 
 

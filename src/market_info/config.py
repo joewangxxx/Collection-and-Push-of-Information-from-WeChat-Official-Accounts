@@ -45,5 +45,12 @@ class AccountConfig(BaseModel):
 
 
 def load_accounts_config(path: Path) -> list[AccountConfig]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return [AccountConfig(**item) for item in data.get("accounts", [])]
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("accounts config root must be a mapping")
+    accounts = data.get("accounts", [])
+    if not isinstance(accounts, list):
+        raise ValueError("accounts must be a list")
+    return [AccountConfig(**item) for item in accounts]

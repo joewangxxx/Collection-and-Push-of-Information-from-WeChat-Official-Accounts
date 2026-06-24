@@ -1,4 +1,4 @@
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser, ArgumentTypeError, Namespace
 from pathlib import Path
 import sys
 
@@ -16,10 +16,17 @@ from market_info.ingest.article_ingestor import ArticleIngestor
 from market_info.wechat.exporter_client import WechatExporterClient, WechatExporterError
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise ArgumentTypeError("--limit must be a positive integer")
+    return parsed
+
+
 def parse_args() -> Namespace:
     parser = ArgumentParser(description="Smoke test one WeChat account ingestion.")
     parser.add_argument("--account-name", required=True)
-    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--limit", type=positive_int, default=5)
     return parser.parse_args()
 
 

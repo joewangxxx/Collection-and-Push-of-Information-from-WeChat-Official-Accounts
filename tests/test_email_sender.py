@@ -12,9 +12,10 @@ TEST_PASSWORD = "test-password-placeholder"
 class FakeSMTPBase:
     instances: list["FakeSMTPBase"] = []
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, timeout: float | None = None):
         self.host = host
         self.port = port
+        self.timeout = timeout
         self.started_tls = False
         self.logged_in = None
         self.sent_messages = []
@@ -45,16 +46,16 @@ class FakeSMTPBase:
 class FakeSMTP(FakeSMTPBase):
     instances: list[FakeSMTPBase] = []
 
-    def __init__(self, host: str, port: int):
-        super().__init__(host, port)
+    def __init__(self, host: str, port: int, timeout: float | None = None):
+        super().__init__(host, port, timeout=timeout)
         FakeSMTP.instances.append(self)
 
 
 class FakeSMTPSSL(FakeSMTPBase):
     instances: list[FakeSMTPBase] = []
 
-    def __init__(self, host: str, port: int):
-        super().__init__(host, port)
+    def __init__(self, host: str, port: int, timeout: float | None = None):
+        super().__init__(host, port, timeout=timeout)
         FakeSMTPSSL.instances.append(self)
 
 
@@ -148,6 +149,7 @@ def test_smtp_port_465_uses_smtp_ssl(monkeypatch, tmp_path) -> None:
     smtp = FakeSMTPSSL.instances[0]
     assert smtp.host == "smtp.example.com"
     assert smtp.port == 465
+    assert smtp.timeout == 30
     assert smtp.started_tls is False
     assert smtp.logged_in == ("sender@example.com", TEST_PASSWORD)
 
@@ -161,6 +163,18 @@ def test_smtp_port_587_uses_starttls(monkeypatch, tmp_path) -> None:
     assert len(FakeSMTPSSL.instances) == 0
     assert len(FakeSMTP.instances) == 1
     assert FakeSMTP.instances[0].started_tls is True
+    assert FakeSMTP.instances[0].timeout == 30
+
+
+def test_non_tls_smtp_port_is_rejected_before_login(monkeypatch, tmp_path) -> None:
+    install_smtp(monkeypatch)
+    install_settings(monkeypatch, make_settings(smtp_port=25))
+
+    with pytest.raises(EmailSendError, match="SMTP_PORT"):
+        send_report_email(make_report(tmp_path), make_summary())
+
+    assert FakeSMTP.instances == []
+    assert FakeSMTPSSL.instances == []
 
 
 def test_mail_to_supports_comma_separated_recipients(monkeypatch, tmp_path) -> None:

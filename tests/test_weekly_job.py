@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from market_info.ai.embeddings import EmbeddingError
 from market_info.ai.extractor import ProjectExtractionError
-from market_info.ai.schemas import ExtractedProject
+from market_info.ai.schemas import ALLOWED_STATUSES, ExtractedProject
 from market_info.db.base import Base
 from market_info.db.models import ProjectRecord, SourceArticle
 from market_info.dedupe.matcher import MatchDecision
@@ -200,13 +200,21 @@ def test_run_weekly_success_calls_steps_in_order(monkeypatch, tmp_path) -> None:
 
     summary = weekly_job.run_weekly(limit=20)
 
-    assert calls == [
+    assert calls[:4] == [
         "ingest",
         ("process", 20, None),
         "commit",
         "excel",
-        ("email", excel_path, summary.to_email_summary()),
     ]
+    email_call = calls[4]
+    assert email_call[0] == "email"
+    assert email_call[1] == excel_path
+    assert email_call[2]["new_projects"] == summary.new_projects
+    assert email_call[2]["merged_projects"] == summary.merged_projects
+    assert email_call[2]["review_projects"] == summary.review_projects
+    assert email_call[2]["project_total"] == summary.project_total
+    assert email_call[2]["status_events"] == summary.status_events
+    assert email_call[2]["generated_at"]
     assert summary.new_articles == 3
     assert summary.new_projects == 1
     assert summary.merged_projects == 2
@@ -378,6 +386,33 @@ def test_pending_articles_uses_processing_status_and_retry_limit(db_session) -> 
     articles = weekly_job._pending_articles(db_session)
 
     assert {article.title for article in articles} == {"pending", "retryable"}
+
+
+def test_pending_articles_with_limit_drains_oldest_first(db_session) -> None:
+    from market_info.jobs import weekly_job
+
+    oldest = make_source_article("oldest", processing_status="pending")
+    middle = make_source_article("middle", processing_status="pending")
+    newest = make_source_article("newest", processing_status="pending")
+    oldest.created_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    middle.created_at = datetime(2026, 6, 2, tzinfo=timezone.utc)
+    newest.created_at = datetime(2026, 6, 3, tzinfo=timezone.utc)
+    db_session.add_all([newest, oldest, middle])
+    db_session.flush()
+
+    articles = weekly_job._pending_articles(db_session, max_articles=2)
+
+    assert [article.title for article in articles] == ["oldest", "middle"]
+
+
+def test_process_pending_articles_rejects_invalid_ai_concurrency(db_session) -> None:
+    from market_info.jobs import weekly_job
+
+    settings = make_settings()
+    settings.ai_concurrency = 0
+
+    with pytest.raises(weekly_job.WeeklyJobError, match="AI_CONCURRENCY"):
+        weekly_job.process_pending_articles(db_session, settings)
 
 
 def test_process_pending_articles_marks_no_project_article_processed(

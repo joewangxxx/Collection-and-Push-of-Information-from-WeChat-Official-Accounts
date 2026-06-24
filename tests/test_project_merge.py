@@ -161,6 +161,24 @@ def test_merge_status_change_creates_event_and_updates_current_status(session) -
     assert project.current_status == "开工"
 
 
+def test_merge_older_record_does_not_move_project_status_or_last_seen_backwards(session) -> None:
+    older_published_at = datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc)
+    newer_seen_at = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
+    article = make_article(published_at=older_published_at)
+    record = make_record(article, status="started")
+    project = make_project(status="filed")
+    project.last_seen_at = newer_seen_at
+    session.add_all([record, project])
+    session.flush()
+
+    apply_match_decision(session, record, make_decision("merge", project.id))
+
+    assert record.project_id == project.id
+    assert project.current_status == "filed"
+    assert project.last_seen_at == newer_seen_at
+    assert session.query(ProjectEvent).count() == 0
+
+
 def test_merge_unknown_status_does_not_overwrite_status_or_create_event(session) -> None:
     article = make_article(published_at=datetime(2026, 6, 5, 8, 0, tzinfo=timezone.utc))
     record = make_record(article, status="未知")

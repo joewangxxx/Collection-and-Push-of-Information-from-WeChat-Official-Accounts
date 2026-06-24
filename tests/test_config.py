@@ -34,6 +34,22 @@ def test_load_accounts_config_returns_empty_list_for_empty_yaml(tmp_path: Path) 
     assert load_accounts_config(config_path) == []
 
 
+def test_load_accounts_config_rejects_non_mapping_root(tmp_path: Path) -> None:
+    config_path = tmp_path / "accounts.yml"
+    config_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="root must be a mapping"):
+        load_accounts_config(config_path)
+
+
+def test_load_accounts_config_rejects_non_list_accounts(tmp_path: Path) -> None:
+    config_path = tmp_path / "accounts.yml"
+    config_path.write_text("accounts: fakeid123", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="accounts must be a list"):
+        load_accounts_config(config_path)
+
+
 def test_load_accounts_config_defaults_enabled_to_true(tmp_path: Path) -> None:
     config_path = tmp_path / "accounts.yml"
     config_path.write_text(
@@ -51,7 +67,9 @@ accounts:
     assert accounts[0].enabled is True
 
 
-def test_settings_ai_concurrency_defaults_to_three() -> None:
+def test_settings_ai_concurrency_defaults_to_three(monkeypatch) -> None:
+    monkeypatch.delenv("AI_CONCURRENCY", raising=False)
+
     settings = Settings(_env_file=None)
 
     assert settings.ai_concurrency == 3

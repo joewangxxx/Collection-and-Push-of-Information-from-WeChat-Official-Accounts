@@ -77,6 +77,16 @@ def test_extract_parses_projects_object_response(respx_mock) -> None:
     assert projects[0].status == "投产"
 
 
+def test_prompt_requests_projects_object_for_json_object_response_format() -> None:
+    client = ProjectExtractor("http://ai.example", "test-key", "test-model")
+
+    messages = client._build_messages("title", "body")
+    user_message = messages[1]["content"]
+
+    assert '{"projects": []}' in user_message
+    assert "JSON 鏁扮粍" not in user_message
+
+
 def test_extract_raises_for_invalid_json(respx_mock) -> None:
     respx_mock.post("http://ai.example/chat/completions").respond(
         json={"choices": [{"message": {"content": "not json"}}]}

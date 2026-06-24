@@ -375,10 +375,9 @@ def _pending_articles(
             )
         )
     )
+    query = query.order_by(SourceArticle.created_at)
     if max_articles is not None:
-        query = query.order_by(SourceArticle.created_at.desc()).limit(max_articles)
-    else:
-        query = query.order_by(SourceArticle.created_at)
+        query = query.limit(max_articles)
     return query.all()
 
 
@@ -494,3 +493,5 @@ def _validate_ai_settings(settings: Settings) -> None:
         missing.append("AI_EMBEDDING_MODEL")
     if missing:
         raise WeeklyJobError(f"Missing required AI config: {', '.join(missing)}")
+    if not isinstance(settings.ai_concurrency, int) or settings.ai_concurrency < 1:
+        raise WeeklyJobError("AI_CONCURRENCY must be a positive integer.")

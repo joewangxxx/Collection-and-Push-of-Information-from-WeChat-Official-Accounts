@@ -69,11 +69,9 @@ class ProjectExtractor:
             "你是产业项目信息抽取助手。请只返回 JSON，不要返回 Markdown、解释或额外文本。"
         )
         user_prompt = f"""
-请从下面的微信公众号文章正文中抽取市场项目信息，并只返回 JSON 数组。
-
-要求：
-1. 没有项目时返回 []。
-2. 一篇文章包含多个项目时，数组中返回多条记录。
+Extract market project information from the article below. Return only a top-level JSON object shaped as {{"projects": []}}.
+Requirements:
+1. Return {{"projects": []}} when no project is found. 2. Put multiple project records inside the projects array.
 3. 投资额统一换算为“亿元”，字段名为 investment_amount_yi。
 4. 无法判断的字段填 null，不要编造。
 5. status 只能使用以下枚举：{status_values}。

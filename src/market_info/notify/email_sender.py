@@ -13,6 +13,9 @@ class EmailSendError(Exception):
     """Raised when report email configuration or SMTP sending fails."""
 
 
+SMTP_TIMEOUT_SECONDS = 30
+
+
 def send_report_email(report_path: Path, summary: dict[str, object]) -> None:
     settings = Settings()
     recipients = _parse_recipients(settings.mail_to)
@@ -42,6 +45,8 @@ def _validate_settings(settings: Settings, recipients: list[str]) -> None:
 
     if missing:
         raise EmailSendError(f"Missing required email config: {', '.join(missing)}")
+    if settings.smtp_port not in (465, 587):
+        raise EmailSendError("SMTP_PORT must be 465 for SSL or 587 for STARTTLS.")
 
 
 def _build_message(
@@ -89,7 +94,11 @@ def _send_message(
 ) -> None:
     smtp_class = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
     try:
-        with smtp_class(settings.smtp_host, settings.smtp_port) as smtp:
+        with smtp_class(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=SMTP_TIMEOUT_SECONDS,
+        ) as smtp:
             if settings.smtp_port == 587:
                 smtp.starttls()
             smtp.login(settings.smtp_user, settings.smtp_password)
