@@ -4,8 +4,8 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from market_info.ai.embeddings import EmbeddingClient, build_project_semantic_text
-from market_info.ai.extractor import ProjectExtractor
+from market_info.ai.embeddings import EmbeddingClient, EmbeddingError, build_project_semantic_text
+from market_info.ai.extractor import ProjectExtractionError, ProjectExtractor
 from market_info.config import Settings, load_accounts_config
 from market_info.db.models import MpAccount, Project, ProjectEvent, ProjectRecord, SourceArticle
 from market_info.db.session import get_session
@@ -132,7 +132,11 @@ def run_weekly(limit: int = 20) -> WeeklyRunSummary:
     new_articles = sum(result.inserted_articles for result in ingest_results)
 
     with get_session() as session:
-        processing_result = process_pending_articles(session, settings)
+        processing_result = process_pending_articles(
+            session,
+            settings,
+            max_articles=max(new_articles, limit),
+        )
         session.commit()
         excel_path = generate_weekly_excel(
             session,
@@ -168,7 +172,11 @@ def run_weekly(limit: int = 20) -> WeeklyRunSummary:
     )
 
 
-def process_pending_articles(session: Session, settings: Settings) -> ProcessingResult:
+def process_pending_articles(
+    session: Session,
+    settings: Settings,
+    max_articles: int | None = None,
+) -> ProcessingResult:
     _validate_ai_settings(settings)
     extractor = ProjectExtractor(
         settings.ai_base_url,
@@ -188,11 +196,19 @@ def process_pending_articles(session: Session, settings: Settings) -> Processing
     merged_projects = 0
     review_projects = 0
 
-    for article in _pending_articles(session):
-        extracted_projects = extractor.extract(article.title, article.content_text)
+    for article in _pending_articles(session, max_articles=max_articles):
+        try:
+            extracted_projects = extractor.extract(article.title, article.content_text)
+        except ProjectExtractionError:
+            continue
+
         for extracted_project in extracted_projects:
             semantic_text = build_project_semantic_text(extracted_project)
-            embedding = embedding_client.embed(semantic_text)
+            try:
+                embedding = embedding_client.embed(semantic_text)
+            except EmbeddingError:
+                continue
+
             record = ProjectRecord(
                 source_article=article,
                 project_name=extracted_project.project_name,
@@ -258,14 +274,20 @@ def _sync_account(session: Session, account_config) -> MpAccount:
     return account
 
 
-def _pending_articles(session: Session) -> list[SourceArticle]:
-    return (
+def _pending_articles(
+    session: Session,
+    max_articles: int | None = None,
+) -> list[SourceArticle]:
+    query = (
         session.query(SourceArticle)
         .outerjoin(ProjectRecord, SourceArticle.id == ProjectRecord.source_article_id)
         .filter(ProjectRecord.id.is_(None))
-        .order_by(SourceArticle.created_at)
-        .all()
     )
+    if max_articles is not None:
+        query = query.order_by(SourceArticle.created_at.desc()).limit(max_articles)
+    else:
+        query = query.order_by(SourceArticle.created_at)
+    return query.all()
 
 
 def _load_candidate_projects(session: Session, candidates) -> list[Project]:
