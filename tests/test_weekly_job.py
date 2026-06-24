@@ -640,12 +640,12 @@ def test_process_pending_articles_replays_database_writes_in_article_order(
 
     first_project = ExtractedProject(
         project_name="first project",
-        status="澶囨",
+        status="备案",
         confidence=0.9,
     )
     second_project = ExtractedProject(
         project_name="second project",
-        status="澶囨",
+        status="备案",
         confidence=0.9,
     )
 
