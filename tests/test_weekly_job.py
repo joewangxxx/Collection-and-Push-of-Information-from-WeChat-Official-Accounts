@@ -388,6 +388,81 @@ def test_pending_articles_uses_processing_status_and_retry_limit(db_session) -> 
     assert {article.title for article in articles} == {"pending", "retryable"}
 
 
+def test_get_processing_status_summary_counts_backlog_states(db_session) -> None:
+    from market_info.jobs import weekly_job
+
+    articles = [
+        make_source_article("pending", processing_status="pending"),
+        make_source_article("processed", processing_status="processed"),
+        make_source_article(
+            "retryable",
+            processing_status="failed",
+            extraction_attempts=2,
+        ),
+        make_source_article(
+            "exhausted",
+            processing_status="failed",
+            extraction_attempts=3,
+        ),
+    ]
+    db_session.add_all(articles)
+    db_session.flush()
+
+    summary = weekly_job.get_processing_status_summary(db_session)
+
+    assert summary.pending == 1
+    assert summary.failed_retryable == 1
+    assert summary.failed_exhausted == 1
+    assert summary.processed == 1
+    assert summary.total == 4
+
+
+def test_process_pending_backlog_only_processes_existing_backlog(monkeypatch) -> None:
+    from market_info.jobs import weekly_job
+
+    calls = []
+    fake_session = SimpleNamespace()
+
+    monkeypatch.setattr(weekly_job, "Settings", make_settings)
+    monkeypatch.setattr(weekly_job, "get_session", lambda: fake_session_scope(fake_session))
+    monkeypatch.setattr(
+        weekly_job,
+        "process_pending_articles",
+        lambda session, settings, max_articles=None, progress_callback=None: calls.append(
+            ("process", session, max_articles, progress_callback)
+        )
+        or weekly_job.ProcessingResult(
+            new_projects=1,
+            merged_projects=2,
+            review_projects=3,
+            status_events=4,
+            project_total=5,
+        ),
+    )
+    monkeypatch.setattr(weekly_job, "check_wechat_auth", lambda *args, **kwargs: calls.append("auth"))
+    monkeypatch.setattr(weekly_job, "ingest_enabled_accounts", lambda *args, **kwargs: calls.append("ingest"))
+    monkeypatch.setattr(weekly_job, "generate_weekly_excel", lambda *args, **kwargs: calls.append("excel"))
+    monkeypatch.setattr(weekly_job, "send_report_email", lambda *args, **kwargs: calls.append("email"))
+
+    progress = []
+    result = weekly_job.process_pending_backlog(limit=20, progress_callback=progress.append)
+
+    assert calls == [("process", fake_session, 20, progress.append)]
+    assert result.new_projects == 1
+    assert result.merged_projects == 2
+    assert result.review_projects == 3
+    assert result.status_events == 4
+    assert result.project_total == 5
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_process_pending_backlog_rejects_non_positive_limit(limit: int) -> None:
+    from market_info.jobs import weekly_job
+
+    with pytest.raises(weekly_job.WeeklyJobError, match="limit"):
+        weekly_job.process_pending_backlog(limit=limit)
+
+
 def test_pending_articles_with_limit_drains_oldest_first(db_session) -> None:
     from market_info.jobs import weekly_job
 

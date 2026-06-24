@@ -75,6 +75,78 @@ def test_run_weekly_failure_returns_exit_code_1_and_prints_error(monkeypatch) ->
     assert "auth failed" in result.output
 
 
+def test_pending_status_prints_backlog_summary(monkeypatch) -> None:
+    class Summary:
+        pending = 83
+        failed_retryable = 1
+        failed_exhausted = 2
+        processed = 42
+        total = 128
+
+    monkeypatch.setattr("market_info.cli.get_backlog_status", lambda: Summary())
+
+    result = runner.invoke(app, ["pending-status"])
+
+    assert result.exit_code == 0
+    assert "pending=83" in result.output
+    assert "failed_retryable=1" in result.output
+    assert "failed_exhausted=2" in result.output
+    assert "processed=42" in result.output
+    assert "total=128" in result.output
+
+
+def test_process_pending_calls_backlog_processor_and_prints_summary(monkeypatch) -> None:
+    calls = []
+
+    class BeforeSummary:
+        pending = 83
+        failed_retryable = 0
+        failed_exhausted = 0
+        processed = 42
+        total = 125
+
+    class AfterSummary:
+        pending = 63
+        failed_retryable = 1
+        failed_exhausted = 0
+        processed = 61
+        total = 125
+
+    class Result:
+        new_projects = 3
+        merged_projects = 1
+        review_projects = 0
+        status_events = 0
+        project_total = 10
+
+    summaries = [BeforeSummary(), AfterSummary()]
+    monkeypatch.setattr("market_info.cli.get_backlog_status", lambda: summaries.pop(0))
+
+    def fake_process_pending_backlog(limit: int, progress_callback=None):
+        calls.append((limit, progress_callback))
+        progress_callback("AI processing articles: total=20 concurrency=3")
+        return Result()
+
+    monkeypatch.setattr("market_info.cli.process_pending_backlog", fake_process_pending_backlog)
+
+    result = runner.invoke(app, ["process-pending", "--limit", "20"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == 20
+    assert calls[0][1] is not None
+    assert "before: pending=83 failed_retryable=0 failed_exhausted=0 processed=42 total=125" in result.output
+    assert "AI processing articles: total=20 concurrency=3" in result.output
+    assert "processed batch: new_projects=3 merged_projects=1 review_projects=0 status_events=0" in result.output
+    assert "after: pending=63 failed_retryable=1 failed_exhausted=0 processed=61 total=125" in result.output
+
+
+def test_process_pending_rejects_non_positive_limit() -> None:
+    result = runner.invoke(app, ["process-pending", "--limit", "0"])
+
+    assert result.exit_code != 0
+    assert "Invalid value" in result.output
+
+
 def test_run_weekly_success_prints_summary(monkeypatch, tmp_path) -> None:
     class Summary:
         new_articles = 3

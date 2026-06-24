@@ -3,16 +3,34 @@ from pathlib import Path
 import typer
 
 from market_info.config import Settings
+from market_info.db.session import get_session
 from market_info.jobs.weekly_job import (
     WeeklyJobError,
     check_wechat_auth,
+    get_processing_status_summary,
     ingest_enabled_accounts,
+    process_pending_backlog,
     run_weekly,
     send_report,
 )
 
 
 app = typer.Typer()
+
+
+def get_backlog_status():
+    with get_session() as session:
+        return get_processing_status_summary(session)
+
+
+def _format_backlog_status(summary) -> str:
+    return (
+        f"pending={summary.pending} "
+        f"failed_retryable={summary.failed_retryable} "
+        f"failed_exhausted={summary.failed_exhausted} "
+        f"processed={summary.processed} "
+        f"total={summary.total}"
+    )
 
 
 @app.command("check-auth")
@@ -40,6 +58,36 @@ def ingest_command(limit: int = typer.Option(20, "--limit")) -> None:
 def send_report_command(excel_path: Path = typer.Option(..., "--excel-path")) -> None:
     send_report(excel_path)
     typer.echo("report email sent")
+
+
+@app.command("pending-status")
+def pending_status_command() -> None:
+    summary = get_backlog_status()
+    typer.echo(f"pending={summary.pending}")
+    typer.echo(f"failed_retryable={summary.failed_retryable}")
+    typer.echo(f"failed_exhausted={summary.failed_exhausted}")
+    typer.echo(f"processed={summary.processed}")
+    typer.echo(f"total={summary.total}")
+
+
+@app.command("process-pending")
+def process_pending_command(limit: int = typer.Option(20, "--limit", min=1)) -> None:
+    try:
+        before = get_backlog_status()
+        typer.echo(f"before: {_format_backlog_status(before)}")
+        result = process_pending_backlog(limit=limit, progress_callback=typer.echo)
+        typer.echo(
+            f"processed batch: "
+            f"new_projects={result.new_projects} "
+            f"merged_projects={result.merged_projects} "
+            f"review_projects={result.review_projects} "
+            f"status_events={result.status_events}"
+        )
+        after = get_backlog_status()
+        typer.echo(f"after: {_format_backlog_status(after)}")
+    except WeeklyJobError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
 
 
 @app.command("run-weekly")

@@ -43,6 +43,15 @@ class ProcessingResult:
 
 
 @dataclass(frozen=True)
+class ArticleProcessingStatusSummary:
+    pending: int = 0
+    failed_retryable: int = 0
+    failed_exhausted: int = 0
+    processed: int = 0
+    total: int = 0
+
+
+@dataclass(frozen=True)
 class ArticleProcessingInput:
     article_id: int
     title: str
@@ -145,6 +154,47 @@ def send_report(excel_path: Path) -> None:
 
 
 ProgressCallback = Callable[[str], None]
+
+
+def get_processing_status_summary(session: Session) -> ArticleProcessingStatusSummary:
+    return ArticleProcessingStatusSummary(
+        pending=session.query(SourceArticle)
+        .filter(SourceArticle.processing_status == "pending")
+        .count(),
+        failed_retryable=session.query(SourceArticle)
+        .filter(
+            SourceArticle.processing_status == "failed",
+            SourceArticle.extraction_attempts < 3,
+        )
+        .count(),
+        failed_exhausted=session.query(SourceArticle)
+        .filter(
+            SourceArticle.processing_status == "failed",
+            SourceArticle.extraction_attempts >= 3,
+        )
+        .count(),
+        processed=session.query(SourceArticle)
+        .filter(SourceArticle.processing_status == "processed")
+        .count(),
+        total=session.query(SourceArticle).count(),
+    )
+
+
+def process_pending_backlog(
+    limit: int = 20,
+    progress_callback: ProgressCallback | None = None,
+) -> ProcessingResult:
+    if limit <= 0:
+        raise WeeklyJobError("limit must be a positive integer.")
+
+    settings = Settings()
+    with get_session() as session:
+        return process_pending_articles(
+            session,
+            settings,
+            max_articles=limit,
+            progress_callback=progress_callback,
+        )
 
 
 def run_weekly(
