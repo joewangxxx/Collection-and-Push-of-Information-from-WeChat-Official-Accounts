@@ -43,6 +43,14 @@ class ProcessingResult:
 
 
 @dataclass(frozen=True)
+class RetryFailedResult:
+    requested_ids: list[int]
+    processed_ids: list[int]
+    skipped_ids: list[int]
+    processing_result: ProcessingResult
+
+
+@dataclass(frozen=True)
 class ArticleProcessingStatusSummary:
     pending: int = 0
     failed_retryable: int = 0
@@ -197,6 +205,51 @@ def process_pending_backlog(
         )
 
 
+def retry_failed_articles(
+    article_ids: list[int],
+    include_exhausted: bool = False,
+    progress_callback: ProgressCallback | None = None,
+) -> RetryFailedResult:
+    requested_ids = list(article_ids)
+    if not requested_ids:
+        raise WeeklyJobError("article_ids must include at least one id.")
+
+    settings = Settings()
+    with get_session() as session:
+        unique_ids = list(dict.fromkeys(requested_ids))
+        articles = (
+            session.query(SourceArticle)
+            .filter(SourceArticle.id.in_(unique_ids))
+            .order_by(SourceArticle.created_at)
+            .all()
+        )
+        articles_by_id = {article.id: article for article in articles}
+        selected_articles = []
+        skipped_ids = []
+        for article_id in unique_ids:
+            article = articles_by_id.get(article_id)
+            if article is None or article.processing_status != "failed":
+                skipped_ids.append(article_id)
+                continue
+            if article.extraction_attempts >= 3 and not include_exhausted:
+                skipped_ids.append(article_id)
+                continue
+            selected_articles.append(article)
+
+        processing_result = _process_article_batch(
+            session,
+            settings,
+            selected_articles,
+            progress_callback=progress_callback,
+        )
+        return RetryFailedResult(
+            requested_ids=requested_ids,
+            processed_ids=[article.id for article in selected_articles if article.id is not None],
+            skipped_ids=skipped_ids,
+            processing_result=processing_result,
+        )
+
+
 def run_weekly(
     limit: int = 20,
     progress_callback: ProgressCallback | None = None,
@@ -260,6 +313,21 @@ def process_pending_articles(
     max_articles: int | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> ProcessingResult:
+    articles = _pending_articles(session, max_articles=max_articles)
+    return _process_article_batch(
+        session,
+        settings,
+        articles,
+        progress_callback=progress_callback,
+    )
+
+
+def _process_article_batch(
+    session: Session,
+    settings: Settings,
+    articles: list[SourceArticle],
+    progress_callback: ProgressCallback | None = None,
+) -> ProcessingResult:
     _validate_ai_settings(settings)
     vector_search = VectorSearch(session)
 
@@ -268,7 +336,6 @@ def process_pending_articles(
     merged_projects = 0
     review_projects = 0
 
-    articles = _pending_articles(session, max_articles=max_articles)
     total_articles = len(articles)
     concurrency = settings.ai_concurrency
     _emit_progress(
@@ -463,6 +530,7 @@ def _process_article_ai(
         settings.ai_base_url,
         settings.ai_api_key,
         settings.ai_extraction_model,
+        timeout=getattr(settings, "ai_extraction_timeout_seconds", 180),
     )
     embedding_client = EmbeddingClient(
         settings.ai_base_url,

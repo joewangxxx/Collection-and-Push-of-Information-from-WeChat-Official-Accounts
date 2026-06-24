@@ -75,6 +75,30 @@ def test_settings_ai_concurrency_defaults_to_three(monkeypatch) -> None:
     assert settings.ai_concurrency == 3
 
 
+def test_settings_ai_extraction_timeout_defaults_to_180(monkeypatch) -> None:
+    monkeypatch.delenv("AI_EXTRACTION_TIMEOUT_SECONDS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.ai_extraction_timeout_seconds == 180
+
+
+def test_settings_ai_extraction_timeout_reads_environment(monkeypatch) -> None:
+    monkeypatch.setenv("AI_EXTRACTION_TIMEOUT_SECONDS", "240")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.ai_extraction_timeout_seconds == 240
+
+
+@pytest.mark.parametrize("value", ["9", "601"])
+def test_settings_ai_extraction_timeout_is_limited(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("AI_EXTRACTION_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
 def test_settings_ai_concurrency_reads_environment(monkeypatch) -> None:
     monkeypatch.setenv("AI_CONCURRENCY", "5")
 

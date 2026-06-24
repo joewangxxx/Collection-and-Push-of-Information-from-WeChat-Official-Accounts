@@ -10,6 +10,7 @@ from market_info.jobs.weekly_job import (
     get_processing_status_summary,
     ingest_enabled_accounts,
     process_pending_backlog,
+    retry_failed_articles,
     run_weekly,
     send_report,
 )
@@ -31,6 +32,20 @@ def _format_backlog_status(summary) -> str:
         f"processed={summary.processed} "
         f"total={summary.total}"
     )
+
+
+def _format_ids(values: list[int]) -> str:
+    return ",".join(str(value) for value in values)
+
+
+def _parse_article_ids(value: str) -> list[int]:
+    try:
+        article_ids = [int(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise typer.BadParameter("article-ids must be comma-separated integers") from exc
+    if not article_ids:
+        raise typer.BadParameter("article-ids must include at least one integer")
+    return article_ids
 
 
 @app.command("check-auth")
@@ -85,6 +100,38 @@ def process_pending_command(limit: int = typer.Option(20, "--limit", min=1)) -> 
         )
         after = get_backlog_status()
         typer.echo(f"after: {_format_backlog_status(after)}")
+    except WeeklyJobError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@app.command("retry-failed")
+def retry_failed_command(
+    article_ids: str = typer.Option(..., "--article-ids"),
+    include_exhausted: bool = typer.Option(False, "--include-exhausted"),
+) -> None:
+    try:
+        parsed_ids = _parse_article_ids(article_ids)
+        result = retry_failed_articles(
+            parsed_ids,
+            include_exhausted=include_exhausted,
+            progress_callback=typer.echo,
+        )
+        typer.echo(f"requested_ids={_format_ids(result.requested_ids)}")
+        typer.echo(f"processed_ids={_format_ids(result.processed_ids)}")
+        typer.echo(f"skipped_ids={_format_ids(result.skipped_ids)}")
+        typer.echo(
+            f"retry batch: "
+            f"new_projects={result.processing_result.new_projects} "
+            f"merged_projects={result.processing_result.merged_projects} "
+            f"review_projects={result.processing_result.review_projects} "
+            f"status_events={result.processing_result.status_events}"
+        )
+        after = get_backlog_status()
+        typer.echo(f"after: {_format_backlog_status(after)}")
+    except typer.BadParameter as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
     except WeeklyJobError as exc:
         typer.echo(str(exc))
         raise typer.Exit(1) from exc

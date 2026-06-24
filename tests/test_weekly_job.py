@@ -30,6 +30,7 @@ def make_settings() -> SimpleNamespace:
         ai_embedding_model="embed-model",
         embedding_dim=1536,
         ai_concurrency=3,
+        ai_extraction_timeout_seconds=180,
         export_dir="exports",
     )
 
@@ -700,6 +701,142 @@ def test_worker_receives_article_snapshot_not_orm_object(
     assert outcome.success is True
     assert outcome.projects == []
     assert seen == [("title", "content")]
+
+
+def test_worker_passes_configured_extraction_timeout(monkeypatch) -> None:
+    from market_info.jobs import weekly_job
+
+    seen = []
+
+    class FakeExtractor:
+        def __init__(self, base_url, api_key, model, timeout) -> None:
+            seen.append(timeout)
+
+        def extract(self, title: str, text: str):
+            return []
+
+    settings = make_settings()
+    settings.ai_extraction_timeout_seconds = 240
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
+
+    outcome = weekly_job._process_article_ai(
+        weekly_job.ArticleProcessingInput(
+            article_id=123,
+            title="title",
+            content_text="content",
+        ),
+        settings,
+    )
+
+    assert outcome.success is True
+    assert seen == [240]
+
+
+def test_retry_failed_articles_skips_exhausted_by_default(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    retryable = make_source_article(
+        "retryable",
+        processing_status="failed",
+        extraction_attempts=2,
+    )
+    exhausted = make_source_article(
+        "exhausted",
+        processing_status="failed",
+        extraction_attempts=3,
+    )
+    db_session.add_all([retryable, exhausted])
+    db_session.flush()
+
+    monkeypatch.setattr(weekly_job, "Settings", make_settings)
+    monkeypatch.setattr(weekly_job, "get_session", lambda: fake_session_scope(db_session))
+    monkeypatch.setattr(
+        weekly_job,
+        "_process_article_batch",
+        lambda session, settings, articles, progress_callback=None: weekly_job.ProcessingResult(),
+    )
+
+    result = weekly_job.retry_failed_articles(
+        [retryable.id, exhausted.id, 999],
+        include_exhausted=False,
+    )
+
+    assert result.requested_ids == [retryable.id, exhausted.id, 999]
+    assert result.processed_ids == [retryable.id]
+    assert result.skipped_ids == [exhausted.id, 999]
+
+
+def test_retry_failed_articles_allows_exhausted_when_requested(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    exhausted = make_source_article(
+        "exhausted",
+        processing_status="failed",
+        extraction_attempts=3,
+    )
+    db_session.add(exhausted)
+    db_session.flush()
+    seen = []
+
+    monkeypatch.setattr(weekly_job, "Settings", make_settings)
+    monkeypatch.setattr(weekly_job, "get_session", lambda: fake_session_scope(db_session))
+    monkeypatch.setattr(
+        weekly_job,
+        "_process_article_batch",
+        lambda session, settings, articles, progress_callback=None: seen.extend(article.id for article in articles)
+        or weekly_job.ProcessingResult(new_projects=1),
+    )
+
+    result = weekly_job.retry_failed_articles(
+        [exhausted.id],
+        include_exhausted=True,
+    )
+
+    assert seen == [exhausted.id]
+    assert result.processed_ids == [exhausted.id]
+    assert result.skipped_ids == []
+    assert result.processing_result.new_projects == 1
+
+
+def test_retry_failed_articles_only_targets_failed_and_does_not_call_other_workflows(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    calls = []
+    failed = make_source_article("failed", processing_status="failed", extraction_attempts=1)
+    processed = make_source_article("processed", processing_status="processed")
+    db_session.add_all([failed, processed])
+    db_session.flush()
+
+    monkeypatch.setattr(weekly_job, "Settings", make_settings)
+    monkeypatch.setattr(weekly_job, "get_session", lambda: fake_session_scope(db_session))
+    monkeypatch.setattr(
+        weekly_job,
+        "_process_article_batch",
+        lambda session, settings, articles, progress_callback=None: calls.append(
+            ("process", [article.id for article in articles])
+        )
+        or weekly_job.ProcessingResult(),
+    )
+    monkeypatch.setattr(weekly_job, "check_wechat_auth", lambda *args, **kwargs: calls.append("auth"))
+    monkeypatch.setattr(weekly_job, "ingest_enabled_accounts", lambda *args, **kwargs: calls.append("ingest"))
+    monkeypatch.setattr(weekly_job, "generate_weekly_excel", lambda *args, **kwargs: calls.append("excel"))
+    monkeypatch.setattr(weekly_job, "send_report_email", lambda *args, **kwargs: calls.append("email"))
+
+    result = weekly_job.retry_failed_articles([failed.id, processed.id], include_exhausted=True)
+
+    assert calls == [("process", [failed.id])]
+    assert result.processed_ids == [failed.id]
+    assert result.skipped_ids == [processed.id]
 
 
 def test_process_pending_articles_replays_database_writes_in_article_order(

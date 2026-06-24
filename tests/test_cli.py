@@ -147,6 +147,58 @@ def test_process_pending_rejects_non_positive_limit() -> None:
     assert "Invalid value" in result.output
 
 
+def test_retry_failed_calls_service_and_prints_summary(monkeypatch) -> None:
+    calls = []
+
+    class ProcessingResult:
+        new_projects = 1
+        merged_projects = 2
+        review_projects = 0
+        status_events = 1
+        project_total = 10
+
+    class RetryResult:
+        requested_ids = [76, 104]
+        processed_ids = [76, 104]
+        skipped_ids = []
+        processing_result = ProcessingResult()
+
+    class Summary:
+        pending = 0
+        failed_retryable = 0
+        failed_exhausted = 0
+        processed = 125
+        total = 125
+
+    def fake_retry_failed_articles(article_ids, include_exhausted=False, progress_callback=None):
+        calls.append((article_ids, include_exhausted, progress_callback))
+        progress_callback("AI processing articles: total=2 concurrency=3")
+        return RetryResult()
+
+    monkeypatch.setattr("market_info.cli.retry_failed_articles", fake_retry_failed_articles)
+    monkeypatch.setattr("market_info.cli.get_backlog_status", lambda: Summary())
+
+    result = runner.invoke(app, ["retry-failed", "--article-ids", "76,104", "--include-exhausted"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == [76, 104]
+    assert calls[0][1] is True
+    assert calls[0][2] is not None
+    assert "AI processing articles: total=2 concurrency=3" in result.output
+    assert "requested_ids=76,104" in result.output
+    assert "processed_ids=76,104" in result.output
+    assert "skipped_ids=" in result.output
+    assert "retry batch: new_projects=1 merged_projects=2 review_projects=0 status_events=1" in result.output
+    assert "after: pending=0 failed_retryable=0 failed_exhausted=0 processed=125 total=125" in result.output
+
+
+def test_retry_failed_rejects_invalid_article_ids() -> None:
+    result = runner.invoke(app, ["retry-failed", "--article-ids", "76,abc"])
+
+    assert result.exit_code == 1
+    assert "article-ids must be comma-separated integers" in result.output
+
+
 def test_run_weekly_success_prints_summary(monkeypatch, tmp_path) -> None:
     class Summary:
         new_articles = 3
