@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     ai_extraction_model: str = Field(default="", alias="AI_EXTRACTION_MODEL")
     ai_embedding_model: str = Field(default="", alias="AI_EMBEDDING_MODEL")
     embedding_dim: int = Field(default=1536, alias="EMBEDDING_DIM")
+    ai_concurrency: int = Field(default=3, ge=1, le=10, alias="AI_CONCURRENCY")
     smtp_host: str = Field(default="", alias="SMTP_HOST")
     smtp_port: int = Field(default=465, alias="SMTP_PORT")
     smtp_user: str = Field(default="", alias="SMTP_USER")

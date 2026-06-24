@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
+from market_info.config import Settings
 from market_info.config import load_accounts_config
 
 
@@ -45,3 +49,25 @@ accounts:
 
     assert len(accounts) == 1
     assert accounts[0].enabled is True
+
+
+def test_settings_ai_concurrency_defaults_to_three() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.ai_concurrency == 3
+
+
+def test_settings_ai_concurrency_reads_environment(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONCURRENCY", "5")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.ai_concurrency == 5
+
+
+@pytest.mark.parametrize("value", ["0", "11"])
+def test_settings_ai_concurrency_is_limited(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("AI_CONCURRENCY", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

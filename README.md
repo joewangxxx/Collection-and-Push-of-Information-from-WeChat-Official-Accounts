@@ -159,6 +159,7 @@ AI_API_KEY=
 AI_EXTRACTION_MODEL=
 AI_EMBEDDING_MODEL=
 EMBEDDING_DIM=1536
+AI_CONCURRENCY=3
 SMTP_HOST=
 SMTP_PORT=465
 SMTP_USER=
@@ -172,6 +173,8 @@ EXPORT_DIR=exports
 
 - `SMTP_PASSWORD` 通常是邮箱授权码，不是网页登录密码。
 - `MAIL_FROM` 通常与 `SMTP_USER` 相同。
+- `AI_CONCURRENCY` 控制 AI 抽取和 embedding 的并发数，本地测试建议 `2` 到 `3`，稳定后可尝试 `5`。
+- 不建议把 `AI_CONCURRENCY` 设置过高，避免触发模型接口限流或导致本机网络不稳定。
 - `.env` 是本地私密配置，不允许提交到 Git。
 - 不要在命令行、日志、截图或提交记录中公开 `SMTP_PASSWORD`、`AI_API_KEY`、`WECHAT_EXPORTER_AUTH_KEY`。
 

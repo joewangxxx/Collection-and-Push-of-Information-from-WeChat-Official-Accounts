@@ -1,6 +1,8 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +29,7 @@ def make_settings() -> SimpleNamespace:
         ai_extraction_model="extract-model",
         ai_embedding_model="embed-model",
         embedding_dim=1536,
+        ai_concurrency=3,
         export_dir="exports",
     )
 
@@ -247,7 +250,10 @@ def test_run_weekly_raises_clear_error_when_email_fails(monkeypatch, tmp_path) -
         weekly_job.run_weekly(limit=20)
 
 
-def test_process_pending_articles_skips_article_when_extraction_fails(monkeypatch) -> None:
+def test_process_pending_articles_skips_article_when_extraction_fails(
+    monkeypatch,
+    db_session,
+) -> None:
     from market_info.jobs import weekly_job
 
     calls = []
@@ -262,32 +268,24 @@ def test_process_pending_articles_skips_article_when_extraction_fails(monkeypatc
                 raise ProjectExtractionError("timeout")
             return []
 
-    class FakeSession:
-        def query(self, model):
-            return SimpleNamespace(count=lambda: 0)
-
-        def flush(self) -> None:
-            pass
-
-    articles = [
-        SimpleNamespace(title="bad", content_text="text"),
-        SimpleNamespace(title="good", content_text="text"),
-    ]
+    bad_article = make_source_article("bad")
+    good_article = make_source_article("good")
+    db_session.add_all([bad_article, good_article])
+    db_session.flush()
     monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
     monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
     monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
-    monkeypatch.setattr(
-        weekly_job,
-        "_pending_articles",
-        lambda session, max_articles=None: articles,
-    )
 
-    result = weekly_job.process_pending_articles(FakeSession(), make_settings())
+    result = weekly_job.process_pending_articles(db_session, make_settings())
 
     assert calls == ["bad", "good"]
     assert result.new_projects == 0
     assert result.merged_projects == 0
     assert result.review_projects == 0
+    db_session.refresh(bad_article)
+    db_session.refresh(good_article)
+    assert bad_article.processing_status == "failed"
+    assert good_article.processing_status == "processed"
 
 
 def test_process_pending_articles_passes_max_articles_to_pending_query(monkeypatch) -> None:
@@ -316,7 +314,10 @@ def test_process_pending_articles_passes_max_articles_to_pending_query(monkeypat
     assert seen == [7]
 
 
-def test_process_pending_articles_skips_project_when_embedding_fails(monkeypatch) -> None:
+def test_process_pending_articles_skips_project_when_embedding_fails(
+    monkeypatch,
+    db_session,
+) -> None:
     from market_info.jobs import weekly_job
 
     extracted_project = ExtractedProject(
@@ -339,34 +340,18 @@ def test_process_pending_articles_skips_project_when_embedding_fails(monkeypatch
         def embed(self, text: str):
             raise EmbeddingError("embedding timeout")
 
-    class FakeSession:
-        def __init__(self) -> None:
-            self.added = []
-
-        def query(self, model):
-            return SimpleNamespace(count=lambda: 0)
-
-        def add(self, record) -> None:
-            self.added.append(record)
-
-        def flush(self) -> None:
-            pass
-
-    session = FakeSession()
-    articles = [SimpleNamespace(title="article", content_text="text", extraction_attempts=0)]
+    article = make_source_article("article")
+    db_session.add(article)
+    db_session.flush()
     monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
     monkeypatch.setattr(weekly_job, "EmbeddingClient", FakeEmbeddingClient)
     monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
-    monkeypatch.setattr(
-        weekly_job,
-        "_pending_articles",
-        lambda session, max_articles=None: articles,
-    )
 
-    result = weekly_job.process_pending_articles(session, make_settings())
+    result = weekly_job.process_pending_articles(db_session, make_settings())
 
-    assert session.added == []
-    assert articles[0].processing_status == "processed"
+    db_session.refresh(article)
+    assert db_session.query(ProjectRecord).filter_by(source_article_id=article.id).count() == 0
+    assert article.processing_status == "processed"
     assert result.new_projects == 0
 
 
@@ -427,8 +412,7 @@ def test_process_pending_articles_marks_no_project_article_processed(
     assert article.processed_at is not None
     assert article.extraction_error is None
     assert weekly_job._pending_articles(db_session) == []
-    assert "extracted projects: 0" in progress
-    assert "article processed" in progress
+    assert any("projects=0 status=processed" in item for item in progress)
 
 
 def test_process_pending_articles_creates_record_and_marks_article_processed(
@@ -522,4 +506,85 @@ def test_process_pending_articles_marks_extraction_failure_failed(
     assert article.extraction_attempts == 1
     assert article.processed_at is not None
     assert "timeout while extracting" in article.extraction_error
-    assert "article failed" in progress
+    assert any("status=failed" in item for item in progress)
+
+
+def test_process_pending_articles_uses_limited_ai_concurrency(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    for index in range(5):
+        db_session.add(make_source_article(f"article-{index}"))
+    db_session.flush()
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    class FakeExtractor:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def extract(self, title: str, text: str):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return []
+
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
+
+    settings = make_settings()
+    settings.ai_concurrency = 2
+    progress = []
+
+    weekly_job.process_pending_articles(
+        db_session,
+        settings,
+        max_articles=5,
+        progress_callback=progress.append,
+    )
+
+    assert max_active == 2
+    assert all(article.processing_status == "processed" for article in db_session.query(SourceArticle))
+    assert "AI processing articles: total=5 concurrency=2" in progress
+
+
+def test_worker_receives_article_snapshot_not_orm_object(
+    monkeypatch,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    seen = []
+
+    class FakeExtractor:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def extract(self, title: str, text: str):
+            seen.append((title, text))
+            return []
+
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
+
+    outcome = weekly_job._process_article_ai(
+        weekly_job.ArticleProcessingInput(
+            article_id=123,
+            title="title",
+            content_text="content",
+        ),
+        make_settings(),
+    )
+
+    assert outcome.article_id == 123
+    assert outcome.success is True
+    assert outcome.projects == []
+    assert seen == [("title", "content")]

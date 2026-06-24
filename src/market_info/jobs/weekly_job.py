@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Callable
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from market_info.ai.embeddings import EmbeddingClient, EmbeddingError, build_project_semantic_text
+from market_info.ai.embeddings import EmbeddingClient, build_project_semantic_text
 from market_info.ai.extractor import ProjectExtractionError, ProjectExtractor
 from market_info.config import Settings, load_accounts_config
 from market_info.db.models import MpAccount, Project, ProjectEvent, ProjectRecord, SourceArticle
@@ -39,6 +40,28 @@ class ProcessingResult:
     review_projects: int = 0
     status_events: int = 0
     project_total: int = 0
+
+
+@dataclass(frozen=True)
+class ArticleProcessingInput:
+    article_id: int
+    title: str
+    content_text: str
+
+
+@dataclass(frozen=True)
+class ProjectExtractionOutput:
+    extracted_project: object
+    semantic_text: str
+    embedding: list[float] | None
+
+
+@dataclass(frozen=True)
+class ArticleProcessingOutcome:
+    article_id: int
+    success: bool
+    projects: list[ProjectExtractionOutput]
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,17 +211,6 @@ def process_pending_articles(
     progress_callback: ProgressCallback | None = None,
 ) -> ProcessingResult:
     _validate_ai_settings(settings)
-    extractor = ProjectExtractor(
-        settings.ai_base_url,
-        settings.ai_api_key,
-        settings.ai_extraction_model,
-    )
-    embedding_client = EmbeddingClient(
-        settings.ai_base_url,
-        settings.ai_api_key,
-        settings.ai_embedding_model,
-        dimensions=settings.embedding_dim,
-    )
     vector_search = VectorSearch(session)
 
     status_events_before = session.query(ProjectEvent).count()
@@ -208,69 +220,94 @@ def process_pending_articles(
 
     articles = _pending_articles(session, max_articles=max_articles)
     total_articles = len(articles)
+    concurrency = settings.ai_concurrency
+    _emit_progress(
+        progress_callback,
+        f"AI processing articles: total={total_articles} concurrency={concurrency}",
+    )
 
-    for index, article in enumerate(articles, start=1):
-        _emit_progress(
-            progress_callback,
-            f"processing article {index}/{total_articles}: {article.title}",
+    article_inputs = [
+        ArticleProcessingInput(
+            article_id=article.id,
+            title=article.title,
+            content_text=article.content_text or "",
         )
-        article.extraction_attempts = (getattr(article, "extraction_attempts", 0) or 0) + 1
-        try:
-            extracted_projects = extractor.extract(article.title, article.content_text)
-        except ProjectExtractionError as exc:
-            _mark_article_failed(article, exc)
-            session.flush()
-            _emit_progress(progress_callback, "article failed")
-            continue
+        for article in articles
+    ]
 
-        _emit_progress(progress_callback, f"extracted projects: {len(extracted_projects)}")
-        for extracted_project in extracted_projects:
-            semantic_text = build_project_semantic_text(extracted_project)
-            try:
-                embedding = embedding_client.embed(semantic_text)
-            except EmbeddingError:
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [
+            executor.submit(_process_article_ai, article_input, settings)
+            for article_input in article_inputs
+        ]
+        for completed_count, future in enumerate(as_completed(futures), start=1):
+            outcome = future.result()
+            article = session.get(SourceArticle, outcome.article_id)
+            if article is None:
                 continue
 
-            record = ProjectRecord(
-                source_article=article,
-                project_name=extracted_project.project_name,
-                project_info=extracted_project.project_info,
-                province=extracted_project.province,
-                city=extracted_project.city,
-                detailed_address=extracted_project.detailed_address,
-                company_name=extracted_project.company_name,
-                investment_amount_yi=extracted_project.investment_amount_yi,
-                industry=extracted_project.industry,
-                field=extracted_project.field,
-                market=extracted_project.market,
-                status=extracted_project.status,
-                confidence=extracted_project.confidence,
-                semantic_text=semantic_text,
-                embedding=embedding,
+            article.extraction_attempts = (article.extraction_attempts or 0) + 1
+            if not outcome.success:
+                _mark_article_failed(article, outcome.error_message)
+                session.commit()
+                _emit_progress(
+                    progress_callback,
+                    f"completed {completed_count}/{total_articles}: "
+                    f"article_id={outcome.article_id} status=failed",
+                )
+                continue
+
+            for project_output in outcome.projects:
+                extracted_project = project_output.extracted_project
+
+                record = ProjectRecord(
+                    source_article=article,
+                    project_name=extracted_project.project_name,
+                    project_info=extracted_project.project_info,
+                    province=extracted_project.province,
+                    city=extracted_project.city,
+                    detailed_address=extracted_project.detailed_address,
+                    company_name=extracted_project.company_name,
+                    investment_amount_yi=extracted_project.investment_amount_yi,
+                    industry=extracted_project.industry,
+                    field=extracted_project.field,
+                    market=extracted_project.market,
+                    status=extracted_project.status,
+                    confidence=extracted_project.confidence,
+                    semantic_text=project_output.semantic_text,
+                    embedding=project_output.embedding,
+                )
+                session.add(record)
+                session.flush()
+
+                candidates = vector_search.find_candidates(
+                    project_output.embedding,
+                    extracted_project.province,
+                )
+                existing_projects = _load_candidate_projects(session, candidates)
+                rule_scores = {
+                    project.id: calculate_rule_score(record, project)
+                    for project in existing_projects
+                    if project.id is not None
+                }
+                decision = choose_best_match(candidates, rule_scores)
+                apply_match_decision(session, record, decision)
+
+                if decision.decision == "new":
+                    new_projects += 1
+                elif decision.decision == "merge":
+                    merged_projects += 1
+                elif decision.decision == "review":
+                    review_projects += 1
+
+            _mark_article_processed(article)
+            session.commit()
+            _emit_progress(
+                progress_callback,
+                f"completed {completed_count}/{total_articles}: "
+                f"article_id={outcome.article_id} "
+                f"projects={len(outcome.projects)} status=processed",
             )
-            session.add(record)
-            session.flush()
-
-            candidates = vector_search.find_candidates(embedding, extracted_project.province)
-            existing_projects = _load_candidate_projects(session, candidates)
-            rule_scores = {
-                project.id: calculate_rule_score(record, project)
-                for project in existing_projects
-                if project.id is not None
-            }
-            decision = choose_best_match(candidates, rule_scores)
-            apply_match_decision(session, record, decision)
-
-            if decision.decision == "new":
-                new_projects += 1
-            elif decision.decision == "merge":
-                merged_projects += 1
-            elif decision.decision == "review":
-                review_projects += 1
-
-        _mark_article_processed(article)
-        session.flush()
-        _emit_progress(progress_callback, "article processed")
 
     status_events_after = session.query(ProjectEvent).count()
     return ProcessingResult(
@@ -329,13 +366,13 @@ def _mark_article_processed(article: SourceArticle) -> None:
     article.extraction_error = None
 
 
-def _mark_article_failed(article: SourceArticle, exc: Exception | None = None) -> None:
+def _mark_article_failed(article: SourceArticle, exc: Exception | str | None = None) -> None:
     article.processing_status = "failed"
     article.processed_at = datetime.now(timezone.utc)
     article.extraction_error = _error_summary(exc) if exc is not None else None
 
 
-def _error_summary(exc: Exception | None, max_length: int = 500) -> str:
+def _error_summary(exc: Exception | str | None, max_length: int = 500) -> str:
     if exc is None:
         return ""
     message = " ".join(str(exc).split())
@@ -345,6 +382,68 @@ def _error_summary(exc: Exception | None, max_length: int = 500) -> str:
 def _emit_progress(callback: ProgressCallback | None, message: str) -> None:
     if callback is not None:
         callback(message)
+
+
+def _process_article_ai(
+    article_input: ArticleProcessingInput,
+    settings: Settings,
+) -> ArticleProcessingOutcome:
+    extractor = ProjectExtractor(
+        settings.ai_base_url,
+        settings.ai_api_key,
+        settings.ai_extraction_model,
+    )
+    embedding_client = EmbeddingClient(
+        settings.ai_base_url,
+        settings.ai_api_key,
+        settings.ai_embedding_model,
+        dimensions=settings.embedding_dim,
+    )
+
+    try:
+        extracted_projects = extractor.extract(
+            article_input.title,
+            article_input.content_text,
+        )
+    except ProjectExtractionError as exc:
+        return ArticleProcessingOutcome(
+            article_id=article_input.article_id,
+            success=False,
+            projects=[],
+            error_message=_error_summary(exc),
+        )
+    except Exception as exc:
+        return ArticleProcessingOutcome(
+            article_id=article_input.article_id,
+            success=False,
+            projects=[],
+            error_message=_error_summary(exc),
+        )
+
+    projects: list[ProjectExtractionOutput] = []
+    embedding_errors: list[str] = []
+    for extracted_project in extracted_projects:
+        semantic_text = build_project_semantic_text(extracted_project)
+        try:
+            embedding = embedding_client.embed(semantic_text)
+        except Exception as exc:
+            embedding_errors.append(_error_summary(exc))
+            continue
+        projects.append(
+            ProjectExtractionOutput(
+                extracted_project=extracted_project,
+                semantic_text=semantic_text,
+                embedding=embedding,
+            )
+        )
+
+    error_message = "; ".join(embedding_errors) if embedding_errors else None
+    return ArticleProcessingOutcome(
+        article_id=article_input.article_id,
+        success=True,
+        projects=projects,
+        error_message=error_message,
+    )
 
 
 def _load_candidate_projects(session: Session, candidates) -> list[Project]:
