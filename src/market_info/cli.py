@@ -45,7 +45,7 @@ def send_report_command(excel_path: Path = typer.Option(..., "--excel-path")) ->
 @app.command("run-weekly")
 def run_weekly_command(limit: int = typer.Option(20, "--limit")) -> None:
     try:
-        summary = run_weekly(limit=limit)
+        summary = run_weekly(limit=limit, progress_callback=typer.echo)
     except WeeklyJobError as exc:
         typer.echo(str(exc))
         raise typer.Exit(1) from exc

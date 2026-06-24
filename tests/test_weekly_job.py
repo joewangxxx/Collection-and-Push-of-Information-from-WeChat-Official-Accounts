@@ -1,12 +1,18 @@
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from market_info.ai.embeddings import EmbeddingError
 from market_info.ai.extractor import ProjectExtractionError
 from market_info.ai.schemas import ExtractedProject
+from market_info.db.base import Base
+from market_info.db.models import ProjectRecord, SourceArticle
+from market_info.dedupe.matcher import MatchDecision
 from market_info.ingest.article_ingestor import IngestResult
 from market_info.notify.email_sender import EmailSendError
 
@@ -36,6 +42,37 @@ class FakeWechatClient:
 @contextmanager
 def fake_session_scope(session: object | None = None):
     yield session or SimpleNamespace(commit=lambda: None)
+
+
+@pytest.fixture()
+def db_session():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def make_source_article(
+    title: str = "article",
+    processing_status: str = "pending",
+    extraction_attempts: int = 0,
+) -> SourceArticle:
+    return SourceArticle(
+        account_id=1,
+        account_name="account",
+        title=title,
+        article_url=f"https://mp.weixin.qq.com/s/{title}",
+        normalized_url=f"https://mp.weixin.qq.com/s/{title}",
+        published_at=datetime(2026, 6, 24, tzinfo=timezone.utc),
+        content_text="article content",
+        content_hash=("a" * 63) + str(len(title) % 10),
+        processing_status=processing_status,
+        extraction_attempts=extraction_attempts,
+    )
 
 
 def test_run_weekly_stops_when_auth_fails_and_does_not_send_email(monkeypatch) -> None:
@@ -136,7 +173,9 @@ def test_run_weekly_success_calls_steps_in_order(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         weekly_job,
         "process_pending_articles",
-        lambda session, settings, max_articles=None: calls.append(("process", max_articles))
+        lambda session, settings, max_articles=None, progress_callback=None: calls.append(
+            ("process", max_articles, progress_callback)
+        )
         or weekly_job.ProcessingResult(
             new_projects=1,
             merged_projects=2,
@@ -160,7 +199,7 @@ def test_run_weekly_success_calls_steps_in_order(monkeypatch, tmp_path) -> None:
 
     assert calls == [
         "ingest",
-        ("process", 20),
+        ("process", 20, None),
         "commit",
         "excel",
         ("email", excel_path, summary.to_email_summary()),
@@ -189,7 +228,7 @@ def test_run_weekly_raises_clear_error_when_email_fails(monkeypatch, tmp_path) -
     monkeypatch.setattr(
         weekly_job,
         "process_pending_articles",
-        lambda session, settings, max_articles=None: weekly_job.ProcessingResult(
+        lambda session, settings, max_articles=None, progress_callback=None: weekly_job.ProcessingResult(
             new_projects=0,
             merged_projects=0,
             review_projects=0,
@@ -227,6 +266,9 @@ def test_process_pending_articles_skips_article_when_extraction_fails(monkeypatc
         def query(self, model):
             return SimpleNamespace(count=lambda: 0)
 
+        def flush(self) -> None:
+            pass
+
     articles = [
         SimpleNamespace(title="bad", content_text="text"),
         SimpleNamespace(title="good", content_text="text"),
@@ -256,6 +298,9 @@ def test_process_pending_articles_passes_max_articles_to_pending_query(monkeypat
     class FakeSession:
         def query(self, model):
             return SimpleNamespace(count=lambda: 0)
+
+        def flush(self) -> None:
+            pass
 
     monkeypatch.setattr(weekly_job, "ProjectExtractor", lambda *args, **kwargs: SimpleNamespace())
     monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
@@ -305,10 +350,10 @@ def test_process_pending_articles_skips_project_when_embedding_fails(monkeypatch
             self.added.append(record)
 
         def flush(self) -> None:
-            raise AssertionError("flush should not be called when embedding fails")
+            pass
 
     session = FakeSession()
-    articles = [SimpleNamespace(title="article", content_text="text")]
+    articles = [SimpleNamespace(title="article", content_text="text", extraction_attempts=0)]
     monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
     monkeypatch.setattr(weekly_job, "EmbeddingClient", FakeEmbeddingClient)
     monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
@@ -321,4 +366,160 @@ def test_process_pending_articles_skips_project_when_embedding_fails(monkeypatch
     result = weekly_job.process_pending_articles(session, make_settings())
 
     assert session.added == []
+    assert articles[0].processing_status == "processed"
     assert result.new_projects == 0
+
+
+def test_pending_articles_uses_processing_status_and_retry_limit(db_session) -> None:
+    from market_info.jobs import weekly_job
+
+    pending = make_source_article("pending", processing_status="pending")
+    processed = make_source_article("processed", processing_status="processed")
+    retryable_failed = make_source_article(
+        "retryable",
+        processing_status="failed",
+        extraction_attempts=2,
+    )
+    exhausted_failed = make_source_article(
+        "exhausted",
+        processing_status="failed",
+        extraction_attempts=3,
+    )
+    db_session.add_all([pending, processed, retryable_failed, exhausted_failed])
+    db_session.flush()
+
+    articles = weekly_job._pending_articles(db_session)
+
+    assert {article.title for article in articles} == {"pending", "retryable"}
+
+
+def test_process_pending_articles_marks_no_project_article_processed(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    article = make_source_article("no-project")
+    db_session.add(article)
+    db_session.flush()
+
+    class FakeExtractor:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def extract(self, title: str, text: str):
+            return []
+
+    progress = []
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
+
+    weekly_job.process_pending_articles(
+        db_session,
+        make_settings(),
+        progress_callback=progress.append,
+    )
+
+    db_session.refresh(article)
+    assert article.processing_status == "processed"
+    assert article.extraction_attempts == 1
+    assert article.processed_at is not None
+    assert article.extraction_error is None
+    assert weekly_job._pending_articles(db_session) == []
+    assert "extracted projects: 0" in progress
+    assert "article processed" in progress
+
+
+def test_process_pending_articles_creates_record_and_marks_article_processed(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    article = make_source_article("with-project")
+    db_session.add(article)
+    db_session.flush()
+    extracted_project = ExtractedProject(
+        project_name="project",
+        company_name="company",
+        province="province",
+        status="备案",
+        confidence=0.9,
+    )
+
+    class FakeExtractor:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def extract(self, title: str, text: str):
+            return [extracted_project]
+
+    class FakeEmbeddingClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def embed(self, text: str):
+            return None
+
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", FakeEmbeddingClient)
+    monkeypatch.setattr(
+        weekly_job,
+        "VectorSearch",
+        lambda session: SimpleNamespace(find_candidates=lambda embedding, province: []),
+    )
+    monkeypatch.setattr(
+        weekly_job,
+        "choose_best_match",
+        lambda candidates, rule_scores: MatchDecision(
+            decision="new",
+            final_score=0,
+            project_id=None,
+            rule_score=0,
+            vector_score=0,
+        ),
+    )
+
+    result = weekly_job.process_pending_articles(db_session, make_settings())
+
+    db_session.refresh(article)
+    assert article.processing_status == "processed"
+    assert db_session.query(ProjectRecord).filter_by(source_article_id=article.id).count() == 1
+    assert result.new_projects == 1
+
+
+def test_process_pending_articles_marks_extraction_failure_failed(
+    monkeypatch,
+    db_session,
+) -> None:
+    from market_info.jobs import weekly_job
+
+    article = make_source_article("bad")
+    db_session.add(article)
+    db_session.flush()
+
+    class FakeExtractor:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def extract(self, title: str, text: str):
+            raise ProjectExtractionError("timeout while extracting")
+
+    progress = []
+    monkeypatch.setattr(weekly_job, "ProjectExtractor", FakeExtractor)
+    monkeypatch.setattr(weekly_job, "EmbeddingClient", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(weekly_job, "VectorSearch", lambda session: SimpleNamespace())
+
+    weekly_job.process_pending_articles(
+        db_session,
+        make_settings(),
+        progress_callback=progress.append,
+    )
+
+    db_session.refresh(article)
+    assert article.processing_status == "failed"
+    assert article.extraction_attempts == 1
+    assert article.processed_at is not None
+    assert "timeout while extracting" in article.extraction_error
+    assert "article failed" in progress

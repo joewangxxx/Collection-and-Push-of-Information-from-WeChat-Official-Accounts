@@ -46,6 +46,7 @@ class SourceArticle(Base):
     __table_args__ = (
         Index("ix_source_articles_normalized_url", "normalized_url", unique=True),
         Index("ix_source_articles_content_hash", "content_hash"),
+        Index("ix_source_articles_processing_status", "processing_status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -60,6 +61,20 @@ class SourceArticle(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    processing_status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    extraction_error: Mapped[str | None] = mapped_column(Text)
+    extraction_attempts: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -64,7 +64,7 @@ def test_send_report_calls_send_report_and_prints_success(monkeypatch) -> None:
 def test_run_weekly_failure_returns_exit_code_1_and_prints_error(monkeypatch) -> None:
     from market_info.jobs.weekly_job import WeeklyJobError
 
-    def fail_run_weekly(limit: int):
+    def fail_run_weekly(limit: int, progress_callback=None):
         raise WeeklyJobError("auth failed")
 
     monkeypatch.setattr("market_info.cli.run_weekly", fail_run_weekly)
@@ -85,7 +85,7 @@ def test_run_weekly_success_prints_summary(monkeypatch, tmp_path) -> None:
         excel_path = tmp_path / "weekly.xlsx"
         email_sent = True
 
-    monkeypatch.setattr("market_info.cli.run_weekly", lambda limit: Summary())
+    monkeypatch.setattr("market_info.cli.run_weekly", lambda limit, progress_callback=None: Summary())
 
     result = runner.invoke(app, ["run-weekly", "--limit", "20"])
 

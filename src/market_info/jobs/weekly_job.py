@@ -1,7 +1,9 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from market_info.ai.embeddings import EmbeddingClient, EmbeddingError, build_project_semantic_text
@@ -119,7 +121,13 @@ def send_report(excel_path: Path) -> None:
     )
 
 
-def run_weekly(limit: int = 20) -> WeeklyRunSummary:
+ProgressCallback = Callable[[str], None]
+
+
+def run_weekly(
+    limit: int = 20,
+    progress_callback: ProgressCallback | None = None,
+) -> WeeklyRunSummary:
     settings = Settings()
     client = WechatExporterClient(
         settings.wechat_exporter_base_url,
@@ -136,6 +144,7 @@ def run_weekly(limit: int = 20) -> WeeklyRunSummary:
             session,
             settings,
             max_articles=max(new_articles, limit),
+            progress_callback=progress_callback,
         )
         session.commit()
         excel_path = generate_weekly_excel(
@@ -176,6 +185,7 @@ def process_pending_articles(
     session: Session,
     settings: Settings,
     max_articles: int | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> ProcessingResult:
     _validate_ai_settings(settings)
     extractor = ProjectExtractor(
@@ -196,12 +206,24 @@ def process_pending_articles(
     merged_projects = 0
     review_projects = 0
 
-    for article in _pending_articles(session, max_articles=max_articles):
+    articles = _pending_articles(session, max_articles=max_articles)
+    total_articles = len(articles)
+
+    for index, article in enumerate(articles, start=1):
+        _emit_progress(
+            progress_callback,
+            f"processing article {index}/{total_articles}: {article.title}",
+        )
+        article.extraction_attempts = (getattr(article, "extraction_attempts", 0) or 0) + 1
         try:
             extracted_projects = extractor.extract(article.title, article.content_text)
-        except ProjectExtractionError:
+        except ProjectExtractionError as exc:
+            _mark_article_failed(article, exc)
+            session.flush()
+            _emit_progress(progress_callback, "article failed")
             continue
 
+        _emit_progress(progress_callback, f"extracted projects: {len(extracted_projects)}")
         for extracted_project in extracted_projects:
             semantic_text = build_project_semantic_text(extracted_project)
             try:
@@ -246,6 +268,10 @@ def process_pending_articles(
             elif decision.decision == "review":
                 review_projects += 1
 
+        _mark_article_processed(article)
+        session.flush()
+        _emit_progress(progress_callback, "article processed")
+
     status_events_after = session.query(ProjectEvent).count()
     return ProcessingResult(
         new_projects=new_projects,
@@ -280,14 +306,45 @@ def _pending_articles(
 ) -> list[SourceArticle]:
     query = (
         session.query(SourceArticle)
-        .outerjoin(ProjectRecord, SourceArticle.id == ProjectRecord.source_article_id)
-        .filter(ProjectRecord.id.is_(None))
+        .filter(
+            or_(
+                SourceArticle.processing_status == "pending",
+                and_(
+                    SourceArticle.processing_status == "failed",
+                    SourceArticle.extraction_attempts < 3,
+                ),
+            )
+        )
     )
     if max_articles is not None:
         query = query.order_by(SourceArticle.created_at.desc()).limit(max_articles)
     else:
         query = query.order_by(SourceArticle.created_at)
     return query.all()
+
+
+def _mark_article_processed(article: SourceArticle) -> None:
+    article.processing_status = "processed"
+    article.processed_at = datetime.now(timezone.utc)
+    article.extraction_error = None
+
+
+def _mark_article_failed(article: SourceArticle, exc: Exception | None = None) -> None:
+    article.processing_status = "failed"
+    article.processed_at = datetime.now(timezone.utc)
+    article.extraction_error = _error_summary(exc) if exc is not None else None
+
+
+def _error_summary(exc: Exception | None, max_length: int = 500) -> str:
+    if exc is None:
+        return ""
+    message = " ".join(str(exc).split())
+    return message[:max_length]
+
+
+def _emit_progress(callback: ProgressCallback | None, message: str) -> None:
+    if callback is not None:
+        callback(message)
 
 
 def _load_candidate_projects(session: Session, candidates) -> list[Project]:

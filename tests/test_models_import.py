@@ -29,3 +29,12 @@ def test_metadata_contains_business_tables() -> None:
     }
 
     assert expected_tables <= set(Base.metadata.tables)
+
+
+def test_source_articles_has_processing_status_columns() -> None:
+    columns = Base.metadata.tables["source_articles"].columns
+
+    assert "processing_status" in columns
+    assert "processed_at" in columns
+    assert "extraction_error" in columns
+    assert "extraction_attempts" in columns
