@@ -13,6 +13,64 @@ def test_empty_article_text_returns_empty_list_without_http(respx_mock) -> None:
     assert len(respx_mock.calls) == 0
 
 
+def test_long_article_without_project_signal_returns_empty_list_without_http(respx_mock) -> None:
+    client = ProjectExtractor("http://ai.example", "test-key", "test-model")
+    long_text = "\n".join(
+        [
+            "今日行业价格走势整体平稳，企业观点分歧较大。" * 500,
+            "会议嘉宾分享了产品效率和市场趋势。" * 500,
+        ]
+    )
+
+    assert client.extract("行业长文", long_text) == []
+    assert len(respx_mock.calls) == 0
+
+
+def test_long_article_uses_preprocessed_text_in_prompt(respx_mock) -> None:
+    route = respx_mock.post("http://ai.example/chat/completions").respond(
+        json={"choices": [{"message": {"content": '{"projects": []}'}}]}
+    )
+    client = ProjectExtractor("http://ai.example", "test-key", "test-model")
+    long_text = "\n".join(
+        [
+            "点击关注，设为星标。",
+            "项目背景：当地正在推进新能源产业集群。",
+            "某新能源企业签约建设光伏基地项目，总投资30亿元，计划明年开工。",
+            "项目建成后预计形成8GW组件产能。",
+            "广告合作请联系后台。",
+            "普通行业资讯。" * 3000,
+        ]
+    )
+
+    assert client.extract("项目长文", long_text) == []
+
+    request_payload = json.loads(route.calls[0].request.content)
+    user_message = request_payload["messages"][1]["content"]
+    assert "光伏基地项目" in user_message
+    assert "8GW组件产能" in user_message
+    assert "点击关注" not in user_message
+    assert "广告合作" not in user_message
+
+
+def test_project_signal_in_title_still_allows_extraction_when_long_body_has_no_signal(respx_mock) -> None:
+    route = respx_mock.post("http://ai.example/chat/completions").respond(
+        json={"choices": [{"message": {"content": '{"projects": []}'}}]}
+    )
+    client = ProjectExtractor("http://ai.example", "test-key", "test-model")
+    long_text = "\n".join(
+        [
+            "今日价格走势整体平稳，市场观点分歧较大。" * 500,
+            "会议嘉宾分享了产品效率和行业趋势。" * 500,
+        ]
+    )
+
+    assert client.extract("某公司光伏项目备案", long_text) == []
+
+    request_payload = json.loads(route.calls[0].request.content)
+    user_message = request_payload["messages"][1]["content"]
+    assert "某公司光伏项目备案" in user_message
+
+
 def test_extract_parses_json_array_response(respx_mock) -> None:
     respx_mock.post("http://ai.example/chat/completions").respond(
         json={

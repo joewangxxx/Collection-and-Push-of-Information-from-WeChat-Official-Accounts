@@ -3,6 +3,10 @@ import json
 import httpx
 from pydantic import ValidationError
 
+from market_info.ai.article_preprocessor import (
+    has_project_signal,
+    prepare_article_text_for_extraction,
+)
 from market_info.ai.schemas import ExtractedProject
 
 
@@ -26,10 +30,15 @@ class ProjectExtractor:
     def extract(self, article_title: str, article_text: str) -> list[ExtractedProject]:
         if not article_text or not article_text.strip():
             return []
+        prepared_article_text = prepare_article_text_for_extraction(article_text)
+        if not prepared_article_text:
+            if not has_project_signal(article_title):
+                return []
+            prepared_article_text = article_title.strip()
 
         payload = {
             "model": self.model,
-            "messages": self._build_messages(article_title, article_text),
+            "messages": self._build_messages(article_title, prepared_article_text),
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
