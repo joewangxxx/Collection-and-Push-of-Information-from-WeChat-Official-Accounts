@@ -199,6 +199,104 @@ def test_retry_failed_rejects_invalid_article_ids() -> None:
     assert "article-ids must be comma-separated integers" in result.output
 
 
+def test_eval_golden_calls_evaluator_and_prints_summary(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    class Extraction:
+        project_precision = 0.75
+        project_recall = 0.6
+        field_accuracy = 0.8
+        status_accuracy = 0.9
+        investment_accuracy = 1.0
+        hallucination_count = 2
+        missed_count = 1
+
+    class Dedupe:
+        dedupe_accuracy = 0.5
+        false_merge_count = 1
+        missed_merge_count = 2
+        status_change_accuracy = 0.75
+
+    class Report:
+        extraction = Extraction()
+        dedupe = Dedupe()
+
+    def fake_evaluate_golden(labels_path, report_path=None):
+        calls.append((labels_path, report_path))
+        return Report()
+
+    monkeypatch.setattr("market_info.cli.evaluate_golden", fake_evaluate_golden)
+    labels_path = tmp_path / "golden_labels.xlsx"
+    report_path = tmp_path / "report.json"
+
+    result = runner.invoke(
+        app,
+        ["eval-golden", "--labels", str(labels_path), "--report-path", str(report_path)],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(labels_path, report_path)]
+    assert "project_precision=0.75" in result.output
+    assert "project_recall=0.6" in result.output
+    assert "dedupe_accuracy=0.5" in result.output
+    assert f"report_path={report_path}" in result.output
+
+
+def test_export_golden_calls_exporter_and_prints_path(monkeypatch, tmp_path) -> None:
+    calls = []
+    labels_path = tmp_path / "golden_labels.xlsx"
+
+    class DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    monkeypatch.setattr("market_info.cli.get_session", lambda: DummySession())
+
+    def fake_export_golden_template(session, output_dir, limit):
+        calls.append((session, output_dir, limit))
+        return labels_path
+
+    monkeypatch.setattr("market_info.cli.export_golden_template", fake_export_golden_template)
+
+    result = runner.invoke(
+        app,
+        ["export-golden", "--output-dir", str(tmp_path), "--limit", "7"],
+    )
+
+    assert result.exit_code == 0
+    assert calls[0][1] == tmp_path
+    assert calls[0][2] == 7
+    assert f"golden labels template exported: {labels_path}" in result.output
+
+
+def test_export_golden_defaults_to_data_directory(monkeypatch, tmp_path) -> None:
+    calls = []
+    labels_path = tmp_path / "golden_labels.xlsx"
+
+    class DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    monkeypatch.setattr("market_info.cli.get_session", lambda: DummySession())
+
+    def fake_export_golden_template(session, output_dir, limit):
+        calls.append((output_dir, limit))
+        return labels_path
+
+    monkeypatch.setattr("market_info.cli.export_golden_template", fake_export_golden_template)
+
+    result = runner.invoke(app, ["export-golden"])
+
+    assert result.exit_code == 0
+    assert calls == [(Path("data/golden_articles"), 20)]
+
+
 def test_run_weekly_success_prints_summary(monkeypatch, tmp_path) -> None:
     class Summary:
         new_articles = 3

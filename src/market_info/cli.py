@@ -4,6 +4,7 @@ import typer
 
 from market_info.config import Settings
 from market_info.db.session import get_session
+from market_info.evaluation import evaluate_golden, export_golden_template
 from market_info.jobs.weekly_job import (
     WeeklyJobError,
     check_wechat_auth,
@@ -135,6 +136,40 @@ def retry_failed_command(
     except WeeklyJobError as exc:
         typer.echo(str(exc))
         raise typer.Exit(1) from exc
+
+
+@app.command("export-golden")
+def export_golden_command(
+    output_dir: Path = typer.Option(
+        Path("data/golden_articles"),
+        "--output-dir",
+    ),
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    with get_session() as session:
+        labels_path = export_golden_template(session, output_dir, limit)
+    typer.echo(f"golden labels template exported: {labels_path}")
+
+
+@app.command("eval-golden")
+def eval_golden_command(
+    labels: Path = typer.Option(..., "--labels"),
+    report_path: Path | None = typer.Option(None, "--report-path"),
+) -> None:
+    report = evaluate_golden(labels, report_path=report_path)
+    output_report_path = report_path or labels.parent / "evaluation_report.json"
+    typer.echo(f"project_precision={report.extraction.project_precision:g}")
+    typer.echo(f"project_recall={report.extraction.project_recall:g}")
+    typer.echo(f"field_accuracy={report.extraction.field_accuracy:g}")
+    typer.echo(f"status_accuracy={report.extraction.status_accuracy:g}")
+    typer.echo(f"investment_accuracy={report.extraction.investment_accuracy:g}")
+    typer.echo(f"hallucination_count={report.extraction.hallucination_count}")
+    typer.echo(f"missed_count={report.extraction.missed_count}")
+    typer.echo(f"dedupe_accuracy={report.dedupe.dedupe_accuracy:g}")
+    typer.echo(f"false_merge_count={report.dedupe.false_merge_count}")
+    typer.echo(f"missed_merge_count={report.dedupe.missed_merge_count}")
+    typer.echo(f"status_change_accuracy={report.dedupe.status_change_accuracy:g}")
+    typer.echo(f"report_path={output_report_path}")
 
 
 @app.command("run-weekly")
