@@ -7,7 +7,7 @@ from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.orm import Session
 
-from market_info.db.models import Project, ProjectEvent, ProjectRecord
+from market_info.db.models import Project, ProjectEvent, ProjectRecord, SourceArticle
 
 
 UPDATED_SHEET = "本周新增与更新"
@@ -34,9 +34,6 @@ UPDATED_HEADERS = [
     "状态变化标注",
     "是否新增项目",
     "是否状态更新",
-    "抽取置信度",
-    "去重决策",
-    "去重分数",
 ]
 
 PROJECT_HEADERS = [
@@ -67,7 +64,6 @@ REVIEW_HEADERS = [
     "详细地址",
     "状态",
     "去重分数",
-    "抽取置信度",
 ]
 
 SUMMARY_HEADERS = ["指标", "数值"]
@@ -92,17 +88,27 @@ def generate_weekly_excel(
     events_by_record_key = _load_events_by_record_key(session)
     updated_records = (
         session.query(ProjectRecord)
+        .join(SourceArticle, ProjectRecord.source_article_id == SourceArticle.id)
         .filter(ProjectRecord.dedupe_decision.in_(("new", "merge")))
-        .order_by(ProjectRecord.id)
+        .order_by(
+            SourceArticle.account_name.asc(),
+            SourceArticle.published_at.desc(),
+            ProjectRecord.id.asc(),
+        )
         .all()
     )
     review_records = (
         session.query(ProjectRecord)
+        .join(SourceArticle, ProjectRecord.source_article_id == SourceArticle.id)
         .filter(ProjectRecord.dedupe_decision == "review")
-        .order_by(ProjectRecord.id)
+        .order_by(
+            SourceArticle.account_name.asc(),
+            SourceArticle.published_at.desc(),
+            ProjectRecord.id.asc(),
+        )
         .all()
     )
-    projects = session.query(Project).order_by(Project.id).all()
+    projects = session.query(Project).order_by(Project.last_seen_at.desc(), Project.id.asc()).all()
 
     _write_sheet(
         updated_sheet,
@@ -157,9 +163,6 @@ def _updated_record_row(
         event.change_label if event else "",
         "是" if record.dedupe_decision == "new" else "否",
         "是" if event else "否",
-        record.confidence,
-        record.dedupe_decision,
-        record.dedupe_score,
     ]
 
 
@@ -195,7 +198,6 @@ def _review_record_row(record: ProjectRecord) -> list[object]:
         record.detailed_address,
         record.status,
         record.dedupe_score,
-        record.confidence,
     ]
 
 

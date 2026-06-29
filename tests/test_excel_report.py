@@ -32,10 +32,11 @@ def make_article(
     title: str,
     normalized_url: str,
     published_at: datetime | None,
+    account_name: str = "光伏前沿",
 ) -> SourceArticle:
     return SourceArticle(
         account_id=1,
-        account_name="光伏前沿",
+        account_name=account_name,
         title=title,
         article_url=f"https://mp.weixin.qq.com/s/{normalized_url}",
         normalized_url=f"https://mp.weixin.qq.com/s/{normalized_url}",
@@ -45,7 +46,11 @@ def make_article(
     )
 
 
-def make_project(name: str, status: str) -> Project:
+def make_project(
+    name: str,
+    status: str,
+    last_seen_at: datetime | None = None,
+) -> Project:
     return Project(
         canonical_project_name=name,
         canonical_company_name="江苏示例新能源有限公司",
@@ -58,7 +63,7 @@ def make_project(name: str, status: str) -> Project:
         market="电力",
         current_status=status,
         first_seen_at=datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc),
-        last_seen_at=datetime(2026, 6, 8, 8, 0, tzinfo=timezone.utc),
+        last_seen_at=last_seen_at or datetime(2026, 6, 8, 8, 0, tzinfo=timezone.utc),
         semantic_text="项目语义文本",
         embedding=None,
     )
@@ -110,8 +115,16 @@ def seed_report_data(session) -> None:
         "review",
         datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc),
     )
-    new_project = make_project("新增光伏组件项目", "备案")
-    existing_project = make_project("已有光伏项目", "开工")
+    new_project = make_project(
+        "新增光伏组件项目",
+        "备案",
+        datetime(2026, 6, 8, 8, 0, tzinfo=timezone.utc),
+    )
+    existing_project = make_project(
+        "已有光伏项目",
+        "开工",
+        datetime(2026, 6, 9, 8, 0, tzinfo=timezone.utc),
+    )
     new_record = make_record(new_article, new_project, "新增光伏组件项目", "new", 92.5, "备案")
     merge_record = make_record(merge_article, existing_project, "已有光伏项目", "merge", 88.2, "开工")
     review_record = make_record(review_article, None, "疑似重复光伏项目", "review", 76.4, "备案")
@@ -184,10 +197,10 @@ def test_updated_sheet_contains_required_headers_and_formatting(session, tmp_pat
         "状态变化标注",
         "是否新增项目",
         "是否状态更新",
-        "抽取置信度",
-        "去重决策",
-        "去重分数",
     ]
+    assert "抽取置信度" not in headers
+    assert "去重决策" not in headers
+    assert "去重分数" not in headers
     assert sheet.freeze_panes == "A2"
     assert sheet["A1"].font.bold is True
     assert sheet.column_dimensions["A"].width > 8
@@ -197,9 +210,9 @@ def test_new_and_merge_records_enter_updated_sheet_with_flags(session, tmp_path)
     _, workbook = load_generated_workbook(session, tmp_path)
     rows = rows_as_dicts(workbook[SHEET_UPDATED])
 
-    assert [row["项目名称"] for row in rows] == ["新增光伏组件项目", "已有光伏项目"]
-    new_row = rows[0]
-    merge_row = rows[1]
+    assert [row["项目名称"] for row in rows] == ["已有光伏项目", "新增光伏组件项目"]
+    merge_row = rows[0]
+    new_row = rows[1]
     assert new_row["公众号名称"] == "光伏前沿"
     assert new_row["文章链接"] == "https://mp.weixin.qq.com/s/new"
     assert new_row["是否新增项目"] == "是"
@@ -218,6 +231,7 @@ def test_review_record_enters_review_sheet_only(session, tmp_path) -> None:
     assert len(review_rows) == 1
     assert review_rows[0]["项目名称"] == "疑似重复光伏项目"
     assert review_rows[0]["去重分数"] == 76.4
+    assert "抽取置信度" not in review_rows[0]
 
 
 def test_project_sheet_contains_existing_projects(session, tmp_path) -> None:
@@ -226,7 +240,107 @@ def test_project_sheet_contains_existing_projects(session, tmp_path) -> None:
     names = {row["项目名称"] for row in rows}
 
     assert {"新增光伏组件项目", "已有光伏项目"} <= names
+    assert [row["项目名称"] for row in rows[:2]] == ["已有光伏项目", "新增光伏组件项目"]
     assert {row["当前状态"] for row in rows} >= {"备案", "开工"}
+
+
+def test_updated_and_review_sheets_sort_by_account_date_and_record_id(session, tmp_path) -> None:
+    records = [
+        make_record(
+            make_article(
+                "B旧文章",
+                "sort-b-old",
+                datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc),
+                account_name="B公众号",
+            ),
+            make_project("B旧项目", "备案"),
+            "B旧项目",
+            "new",
+            90.0,
+            "备案",
+        ),
+        make_record(
+            make_article(
+                "A新文章",
+                "sort-a-new",
+                datetime(2026, 6, 3, 8, 0, tzinfo=timezone.utc),
+                account_name="A公众号",
+            ),
+            make_project("A新项目", "备案"),
+            "A新项目",
+            "new",
+            90.0,
+            "备案",
+        ),
+        make_record(
+            make_article(
+                "A旧文章",
+                "sort-a-old",
+                datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc),
+                account_name="A公众号",
+            ),
+            make_project("A旧项目", "备案"),
+            "A旧项目",
+            "new",
+            90.0,
+            "备案",
+        ),
+        make_record(
+            make_article(
+                "A同日文章",
+                "sort-a-same-day",
+                datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc),
+                account_name="A公众号",
+            ),
+            make_project("A同日项目", "备案"),
+            "A同日项目",
+            "new",
+            90.0,
+            "备案",
+        ),
+        make_record(
+            make_article(
+                "C复核文章",
+                "sort-c-review",
+                datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc),
+                account_name="C公众号",
+            ),
+            None,
+            "C复核项目",
+            "review",
+            75.0,
+            "备案",
+        ),
+        make_record(
+            make_article(
+                "A复核文章",
+                "sort-a-review",
+                datetime(2026, 6, 2, 8, 0, tzinfo=timezone.utc),
+                account_name="A公众号",
+            ),
+            None,
+            "A复核项目",
+            "review",
+            75.0,
+            "备案",
+        ),
+    ]
+    session.add_all(records)
+    session.flush()
+
+    output_path = generate_weekly_excel(session, tmp_path, run_id="sort")
+    workbook = load_workbook(output_path)
+
+    updated_rows = rows_as_dicts(workbook[SHEET_UPDATED])
+    assert [row["项目名称"] for row in updated_rows] == [
+        "A新项目",
+        "A旧项目",
+        "A同日项目",
+        "B旧项目",
+    ]
+
+    review_rows = rows_as_dicts(workbook[SHEET_REVIEW])
+    assert [row["项目名称"] for row in review_rows] == ["A复核项目", "C复核项目"]
 
 
 def test_summary_sheet_counts_are_correct(session, tmp_path) -> None:
