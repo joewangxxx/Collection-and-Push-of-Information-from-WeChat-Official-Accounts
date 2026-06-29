@@ -28,13 +28,16 @@ class ProjectExtractor:
         self.timeout = timeout
 
     def extract(self, article_title: str, article_text: str) -> list[ExtractedProject]:
-        if not article_text or not article_text.strip():
-            return []
-        prepared_article_text = prepare_article_text_for_extraction(article_text)
+        prepared_article_text = (
+            prepare_article_text_for_extraction(article_text)
+            if article_text and article_text.strip()
+            else ""
+        )
         if not prepared_article_text:
-            if not has_project_signal(article_title):
+            title_text = article_title.strip()
+            if not title_text or not has_project_signal(title_text):
                 return []
-            prepared_article_text = article_title.strip()
+            prepared_article_text = title_text
 
         payload = {
             "model": self.model,

@@ -13,6 +13,19 @@ def test_empty_article_text_returns_empty_list_without_http(respx_mock) -> None:
     assert len(respx_mock.calls) == 0
 
 
+def test_project_signal_in_title_allows_extraction_when_body_is_blank(respx_mock) -> None:
+    route = respx_mock.post("http://ai.example/chat/completions").respond(
+        json={"choices": [{"message": {"content": '{"projects": []}'}}]}
+    )
+    client = ProjectExtractor("http://ai.example", "test-key", "test-model")
+
+    assert client.extract("某公司光伏项目备案", "   ") == []
+
+    request_payload = json.loads(route.calls[0].request.content)
+    user_message = request_payload["messages"][1]["content"]
+    assert "某公司光伏项目备案" in user_message
+
+
 def test_long_article_without_project_signal_returns_empty_list_without_http(respx_mock) -> None:
     client = ProjectExtractor("http://ai.example", "test-key", "test-model")
     long_text = "\n".join(
@@ -69,6 +82,7 @@ def test_project_signal_in_title_still_allows_extraction_when_long_body_has_no_s
     request_payload = json.loads(route.calls[0].request.content)
     user_message = request_payload["messages"][1]["content"]
     assert "某公司光伏项目备案" in user_message
+    assert "今日价格走势整体平稳" not in user_message
 
 
 def test_extract_parses_json_array_response(respx_mock) -> None:

@@ -24,16 +24,29 @@ PROJECT_KEYWORDS = (
     "示范区",
 )
 
-NOISE_KEYWORDS = (
+NOISE_PHRASES = (
     "点击关注",
     "在小说阅读器读本章",
     "去阅读",
-    "分享",
-    "点赞",
     "广告合作",
     "设为星标",
     "点个在看",
 )
+
+STANDALONE_NOISE_TEXTS = {
+    "分享",
+    "点赞",
+    "在看",
+    "点赞分享",
+    "分享点赞",
+    "点赞分享在看",
+    "分享点赞在看",
+    "点赞、分享",
+    "分享、点赞",
+    "点赞、分享、在看",
+    "分享、点赞、在看",
+}
+NOISE_PUNCTUATION = str.maketrans("", "", "。.!！?？,，、；;：:")
 
 
 def prepare_article_text_for_extraction(article_text: str, max_chars: int = 12000) -> str:
@@ -80,7 +93,12 @@ def _split_paragraphs(article_text: str) -> list[str]:
 
 
 def _is_noise_paragraph(paragraph: str) -> bool:
-    return any(keyword in paragraph for keyword in NOISE_KEYWORDS)
+    compact_text = "".join(paragraph.split())
+    if any(phrase in compact_text for phrase in NOISE_PHRASES):
+        return True
+
+    stripped_text = compact_text.translate(NOISE_PUNCTUATION)
+    return stripped_text in STANDALONE_NOISE_TEXTS
 
 
 def has_project_signal(text: str) -> bool:

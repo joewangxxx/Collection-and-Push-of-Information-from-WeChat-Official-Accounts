@@ -45,7 +45,7 @@ def test_noise_paragraphs_are_removed_from_long_article() -> None:
             "前情摘要。",
             "某新能源企业签约建设储能示范区项目，投资5亿元。",
             "广告合作请联系后台。",
-            "点赞、分享、在看。",
+            "分享，点赞，在看。",
         ]
     )
 
@@ -54,6 +54,23 @@ def test_noise_paragraphs_are_removed_from_long_article() -> None:
     assert "储能示范区项目" in prepared
     assert "点击关注" not in prepared
     assert "广告合作" not in prepared
+    assert "点赞" not in prepared
+
+
+def test_common_share_like_words_do_not_remove_project_reporting_paragraph() -> None:
+    text = "\n".join(
+        [
+            "前情摘要。",
+            "专家分享称，某新能源企业投资建设光伏基地项目，总投资8亿元。",
+            "点赞、分享、在看。",
+            "普通资讯。" * 100,
+        ]
+    )
+
+    prepared = prepare_article_text_for_extraction(text, max_chars=120)
+
+    assert "专家分享称" in prepared
+    assert "光伏基地项目" in prepared
     assert "点赞" not in prepared
 
 
@@ -83,4 +100,5 @@ def test_long_context_cannot_consume_budget_before_matched_paragraph() -> None:
     prepared = prepare_article_text_for_extraction(text, max_chars=80)
 
     assert "光伏项目" in prepared
+    assert not prepared.startswith("很长的背景介绍")
     assert len(prepared) <= 80
