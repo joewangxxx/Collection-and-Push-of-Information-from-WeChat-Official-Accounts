@@ -173,7 +173,7 @@ def eval_golden_command(
 
 
 @app.command("run-weekly")
-def run_weekly_command(limit: int = typer.Option(20, "--limit")) -> None:
+def run_weekly_command(limit: int = typer.Option(10, "--limit")) -> None:
     try:
         summary = run_weekly(limit=limit, progress_callback=typer.echo)
     except WeeklyJobError as exc:

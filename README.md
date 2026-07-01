@@ -311,7 +311,7 @@ market-info send-report --excel-path exports/sample.xlsx
 完整周报流程：
 
 ```powershell
-market-info run-weekly --limit 20
+market-info run-weekly --limit 10
 ```
 
 `run-weekly` 会依次执行：
@@ -330,7 +330,7 @@ docker compose up -d
 python -m pip install -e ".[dev]"
 alembic upgrade head
 market-info check-auth
-market-info run-weekly --limit 20
+market-info run-weekly --limit 10
 ```
 
 完成后检查：
@@ -617,7 +617,7 @@ market-info retry-failed --article-ids 文章ID列表 --include-exhausted
 Linux cron 示例：
 
 ```cron
-0 8 * * 1 cd /path/to/project && market-info run-weekly --limit 20 >> logs/weekly.log 2>&1
+0 8 * * 1 cd /path/to/project && market-info run-weekly --limit 10 >> logs/weekly.log 2>&1
 ```
 
 ## 20. 常见问题

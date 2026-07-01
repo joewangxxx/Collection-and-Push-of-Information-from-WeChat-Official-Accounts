@@ -69,10 +69,35 @@ def test_run_weekly_failure_returns_exit_code_1_and_prints_error(monkeypatch) ->
 
     monkeypatch.setattr("market_info.cli.run_weekly", fail_run_weekly)
 
-    result = runner.invoke(app, ["run-weekly", "--limit", "20"])
+    result = runner.invoke(app, ["run-weekly", "--limit", "10"])
 
     assert result.exit_code == 1
     assert "auth failed" in result.output
+
+
+def test_run_weekly_uses_limit_10_by_default(monkeypatch) -> None:
+    calls = []
+
+    class Summary:
+        new_articles = 0
+        new_projects = 0
+        merged_projects = 0
+        review_projects = 0
+        status_events = 0
+        excel_path = Path("weekly.xlsx")
+        email_sent = True
+
+    def fake_run_weekly(limit: int, progress_callback=None):
+        calls.append((limit, progress_callback))
+        return Summary()
+
+    monkeypatch.setattr("market_info.cli.run_weekly", fake_run_weekly)
+
+    result = runner.invoke(app, ["run-weekly"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == 10
+    assert calls[0][1] is not None
 
 
 def test_pending_status_prints_backlog_summary(monkeypatch) -> None:
@@ -309,7 +334,7 @@ def test_run_weekly_success_prints_summary(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr("market_info.cli.run_weekly", lambda limit, progress_callback=None: Summary())
 
-    result = runner.invoke(app, ["run-weekly", "--limit", "20"])
+    result = runner.invoke(app, ["run-weekly", "--limit", "10"])
 
     assert result.exit_code == 0
     assert "新增文章数: 3" in result.output

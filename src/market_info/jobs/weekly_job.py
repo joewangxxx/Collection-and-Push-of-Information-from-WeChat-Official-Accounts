@@ -251,7 +251,7 @@ def retry_failed_articles(
 
 
 def run_weekly(
-    limit: int = 20,
+    limit: int = 10,
     progress_callback: ProgressCallback | None = None,
 ) -> WeeklyRunSummary:
     settings = Settings()
