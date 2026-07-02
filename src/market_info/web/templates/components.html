@@ -1,0 +1,42 @@
+{% macro glass_panel(title, subtitle=None, class_name="") %}
+  <section class="glass-panel panel {{ class_name }}">
+    <header class="panel-header">
+      <div>
+        <h2>{{ title }}</h2>
+        {% if subtitle %}
+          <p>{{ subtitle }}</p>
+        {% endif %}
+      </div>
+    </header>
+    <div class="panel-body">
+      {{ caller() }}
+    </div>
+  </section>
+{% endmacro %}
+
+{% macro metric_tile(label, value, detail="", tone="neutral") %}
+  <article class="metric-tile metric-{{ tone }}">
+    <span class="metric-label">{{ label }}</span>
+    <strong class="metric-value">{{ value }}</strong>
+    {% if detail %}
+      <span class="metric-detail">{{ detail }}</span>
+    {% endif %}
+  </article>
+{% endmacro %}
+
+{% macro status_pill(label, tone="neutral") %}
+  <span class="status-pill status-{{ tone }}">
+    <span class="status-dot" aria-hidden="true"></span>
+    {{ label }}
+  </span>
+{% endmacro %}
+
+{% macro command_button(label, href=None, tone="primary", busy_label="处理中") %}
+  {% if href %}
+    <a class="command-button command-{{ tone }}" href="{{ href }}">{{ label }}</a>
+  {% else %}
+    <button class="command-button command-{{ tone }}" type="submit" data-disable-on-click data-busy-label="{{ busy_label }}">
+      {{ label }}
+    </button>
+  {% endif %}
+{% endmacro %}

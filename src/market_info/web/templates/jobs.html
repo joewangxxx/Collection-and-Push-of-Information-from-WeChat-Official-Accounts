@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="metric-grid" aria-label="任务操作">
+    <form class="metric-tile" method="post" action="/jobs/check-auth">
+      <span class="metric-label">微信授权检查</span>
+      <strong class="metric-value">Auth</strong>
+      {{ ui.command_button("立即检查", None, "primary", "检查中") }}
+    </form>
+    <form class="metric-tile" method="post" action="/jobs/run-weekly">
+      <label class="metric-label" for="weekly-limit">周报 limit</label>
+      <input id="weekly-limit" class="field-input" name="limit" type="number" min="1" value="10">
+      {{ ui.command_button("运行周报", None, "primary", "运行中") }}
+    </form>
+    <form class="metric-tile" method="post" action="/jobs/process-pending">
+      <label class="metric-label" for="pending-limit">待处理 limit</label>
+      <input id="pending-limit" class="field-input" name="limit" type="number" min="1" value="20">
+      {{ ui.command_button("处理 pending", None, "secondary", "处理中") }}
+    </form>
+    <form class="metric-tile" method="post" action="/jobs/retry-failed">
+      <label class="metric-label" for="article-ids">失败文章 ID</label>
+      <input id="article-ids" class="field-input" name="article_ids" type="text" placeholder="76,104" required>
+      <label class="check-row">
+        <input name="include_exhausted" type="checkbox" value="true">
+        包含 exhausted
+      </label>
+      {{ ui.command_button("提交重试", None, "secondary", "提交中") }}
+    </form>
+  </section>
+
+  {% call ui.glass_panel("任务记录", "最近在本地运营台发起的任务") %}
+    {% if jobs %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>任务</th>
+              <th>状态</th>
+              <th>开始时间</th>
+              <th>结束时间</th>
+              <th>错误</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+              <tr>
+                <td><a href="/jobs/{{ job.id }}">{{ job.kind }}</a></td>
+                <td>{{ ui.status_pill(job.status, "ok" if job.status == "succeeded" else "danger" if job.status == "failed" else "amber") }}</td>
+                <td>{{ job.started_at or "" }}</td>
+                <td>{{ job.finished_at or "" }}</td>
+                <td>{{ job.error_message or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty-state">还没有任务记录。可以从上方发起一次检查或周报任务。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}

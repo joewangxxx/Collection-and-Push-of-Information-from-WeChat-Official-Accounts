@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }} - Market Info Ops</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar glass-panel" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">MI</span>
+          <div>
+            <strong>Market Info Ops</strong>
+            <span>本地运营台</span>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <a class="nav-link {% if active_nav == 'dashboard' %}is-active{% endif %}" href="/">总览</a>
+          <a class="nav-link {% if active_nav == 'jobs' %}is-active{% endif %}" href="/jobs">运行中心</a>
+          <a class="nav-link {% if active_nav == 'articles' %}is-active{% endif %}" href="/articles">文章队列</a>
+          <a class="nav-link {% if active_nav == 'reports' %}is-active{% endif %}" href="/reports">周报文件</a>
+        </nav>
+      </aside>
+      <main class="main-surface">
+        <header class="topbar glass-panel">
+          <div>
+            <p class="eyebrow">Market intelligence automation</p>
+            <h1>{{ page_title }}</h1>
+          </div>
+          <a class="ghost-button" href="/jobs">运行任务</a>
+        </header>
+        <section class="content-region">
+          {% block content %}{% endblock %}
+        </section>
+      </main>
+    </div>
+    <script src="{{ url_for('static', path='app.js') }}"></script>
+  </body>
+</html>

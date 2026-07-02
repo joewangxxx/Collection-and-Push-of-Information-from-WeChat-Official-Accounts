@@ -20,6 +20,23 @@ from market_info.jobs.weekly_job import (
 app = typer.Typer()
 
 
+@app.command("web")
+def web_command(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8080, "--port", min=1, max=65535),
+    reload: bool = typer.Option(False, "--reload/--no-reload"),
+) -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "market_info.web.app:create_app",
+        host=host,
+        port=port,
+        reload=reload,
+        factory=True,
+    )
+
+
 def get_backlog_status():
     with get_session() as session:
         return get_processing_status_summary(session)
