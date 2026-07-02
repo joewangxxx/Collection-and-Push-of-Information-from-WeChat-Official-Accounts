@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="hero-panel glass-panel">
+    <div>
+      <p class="eyebrow">Project ledger</p>
+      <h2>{{ detail.project.project_name }}</h2>
+      <p class="hero-copy">{{ detail.project.company_name }} / {{ detail.project.province }} {{ detail.project.city }} / {{ detail.project.status or "未知" }}</p>
+    </div>
+    <div class="hero-actions">
+      {{ ui.status_pill(detail.project.status or "未知", "neutral") }}
+      <a class="command-button command-secondary" href="/projects">返回台账</a>
+    </div>
+  </section>
+
+  <section class="detail-grid">
+    {% call ui.glass_panel("状态时间线", "由项目事件表生成") %}
+      {% if detail.events %}
+        <ol class="timeline-list">
+          {% for event in detail.events %}
+            <li>
+              <strong>{{ event.change_label or event.event_status }}</strong>
+              <span>{{ event.event_date or "" }}</span>
+              <a href="{{ event.article_url }}" target="_blank" rel="noreferrer">{{ event.article_title }}</a>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="empty-state">还没有状态变化事件。</p>
+      {% endif %}
+    {% endcall %}
+
+    {% call ui.glass_panel("来源记录", "构成该项目的抽取记录") %}
+      {% if detail.records %}
+        <div class="data-table-wrap compact-table">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>文章</th>
+                <th>决策</th>
+                <th>分数</th>
+                <th>状态</th>
+                <th>发布时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for record in detail.records %}
+                <tr>
+                  <td><a href="{{ record.article_url }}" target="_blank" rel="noreferrer">{{ record.article_title }}</a></td>
+                  <td>{{ record.decision }}</td>
+                  <td>{{ record.score or "" }}</td>
+                  <td>{{ record.status or "" }}</td>
+                  <td>{{ record.published_at or "" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty-state">没有来源记录。</p>
+      {% endif %}
+    {% endcall %}
+  </section>
+{% endblock %}

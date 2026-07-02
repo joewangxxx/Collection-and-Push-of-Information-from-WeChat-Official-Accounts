@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="detail-grid">
+    {% call ui.glass_panel("待复核记录", "确认该抽取记录应该新建项目，还是并入已有项目") %}
+      <dl class="detail-list">
+        <dt>项目</dt><dd>{{ record.project_name }}</dd>
+        <dt>企业</dt><dd>{{ record.company_name }}</dd>
+        <dt>地区</dt><dd>{{ record.province }} {{ record.city }}</dd>
+        <dt>状态</dt><dd>{{ record.status }}</dd>
+        <dt>分数</dt><dd>{{ record.dedupe_score or "" }}</dd>
+        <dt>来源</dt><dd><a href="{{ record.article_url }}" target="_blank" rel="noreferrer">{{ record.article_title }}</a></dd>
+      </dl>
+      <form method="post" action="/reviews/{{ record.id }}/new">
+        {{ ui.command_button("作为新项目入库", None, "primary", "处理中") }}
+      </form>
+    {% endcall %}
+
+    {% call ui.glass_panel("候选项目", "选择一个已有项目进行合并") %}
+      <form class="filter-row" method="get" action="/reviews/{{ record.id }}">
+        <label>
+          搜索项目或企业
+          <input class="field-input" name="q" type="text" value="{{ query }}">
+        </label>
+        {{ ui.command_button("搜索", None, "secondary", "搜索中") }}
+      </form>
+      {% if candidates %}
+        <div class="candidate-list">
+          {% for candidate in candidates %}
+            <form class="candidate-row" method="post" action="/reviews/{{ record.id }}/merge">
+              <input type="hidden" name="project_id" value="{{ candidate.id }}">
+              <div>
+                <strong>{{ candidate.project_name }}</strong>
+                <span>{{ candidate.company_name }} / {{ candidate.province }} {{ candidate.city }} / {{ candidate.status }}</span>
+              </div>
+              {{ ui.status_pill(candidate.score_hint, "amber") }}
+              {{ ui.command_button("合并到此项目", None, "secondary", "处理中") }}
+            </form>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">没有找到候选项目，可以作为新项目入库。</p>
+      {% endif %}
+    {% endcall %}
+  </section>
+{% endblock %}
