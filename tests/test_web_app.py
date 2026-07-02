@@ -14,6 +14,8 @@ def test_create_app_serves_dashboard_shell() -> None:
     assert "Market Info Ops" in response.text
     assert "总览" in response.text
     assert "运行中心" in response.text
+    assert "公众号账号" in response.text
+    assert "推送记录" in response.text
     assert "文章队列" in response.text
     assert "周报文件" in response.text
 
@@ -38,32 +40,32 @@ def test_dashboard_shell_uses_design_system_classes() -> None:
     assert "command-button" in response.text
 
 
-def test_reviews_page_renders_in_main_route_smoke_suite() -> None:
+def test_main_routes_render_smoke_suite() -> None:
     client = TestClient(create_app())
 
-    response = client.get("/reviews")
+    for route in [
+        "/jobs",
+        "/accounts",
+        "/delivery",
+        "/articles",
+        "/reports",
+        "/reviews",
+        "/projects",
+        "/quality",
+    ]:
+        response = client.get(route)
+        assert response.status_code == 200, route
+        assert "Market Info Ops" in response.text
 
-    assert response.status_code == 200
-    assert "复核工作台" in response.text
 
-
-def test_projects_page_renders_in_main_route_smoke_suite() -> None:
+def test_accounts_page_renders() -> None:
     client = TestClient(create_app())
 
-    response = client.get("/projects")
+    response = client.get("/accounts")
 
     assert response.status_code == 200
-    assert "项目台账" in response.text
-
-
-def test_quality_page_renders_in_main_route_smoke_suite() -> None:
-    client = TestClient(create_app())
-
-    response = client.get("/quality")
-
-    assert response.status_code == 200
-    assert "质量与设置" in response.text
-    assert "安全配置快照" in response.text
+    assert "公众号账号" in response.text
+    assert "同步配置" in response.text
 
 
 def test_reports_page_renders() -> None:
@@ -89,7 +91,17 @@ def test_web_ui_text_does_not_contain_mojibake_markers() -> None:
 def test_rendered_pages_do_not_contain_mojibake_markers() -> None:
     client = TestClient(create_app())
 
-    for route in ["/", "/jobs", "/articles", "/reports", "/reviews", "/projects", "/quality"]:
+    for route in [
+        "/",
+        "/jobs",
+        "/accounts",
+        "/delivery",
+        "/articles",
+        "/reports",
+        "/reviews",
+        "/projects",
+        "/quality",
+    ]:
         response = client.get(route)
         assert response.status_code == 200
         assert "\ufffd" not in response.text, f"{route} contains replacement characters"

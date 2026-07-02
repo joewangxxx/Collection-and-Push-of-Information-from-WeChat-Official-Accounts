@@ -619,6 +619,15 @@ h1 {
   padding-left: 22px;
 }
 
+.log-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+  color: #374151;
+  overflow-wrap: anywhere;
+}
+
 .timeline-list li {
   padding-left: 8px;
 }
