@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
-from market_info.jobs.weekly_job import send_report
+from market_info.web.services.delivery_service import send_report_and_record
 from market_info.web.templating import templates
 from market_info.web.services.job_runner import job_runner
 from market_info.web.services.report_service import list_reports, resolve_report_path
@@ -47,5 +47,5 @@ def send_existing_report(report_name: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Report not found") from exc
-    job_runner.start_job("send_report", send_report, {"excel_path": path})
+    job_runner.start_job("send_report", send_report_and_record, {"excel_path": path})
     return RedirectResponse("/reports", status_code=303)

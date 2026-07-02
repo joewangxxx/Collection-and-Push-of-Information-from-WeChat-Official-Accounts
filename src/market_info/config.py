@@ -6,7 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+    )
 
     database_url: str = Field(
         default="postgresql+psycopg://market_info:market_info@localhost:5432/market_info",
@@ -42,6 +46,7 @@ class Settings(BaseSettings):
     mail_cc: str = Field(default="", alias="MAIL_CC")
     wecom_webhook_url: str = Field(default="", alias="WECOM_WEBHOOK_URL")
     export_dir: str = Field(default="exports", alias="EXPORT_DIR")
+    web_access_token: str = Field(default="", alias="WEB_ACCESS_TOKEN")
 
 
 class AccountConfig(BaseModel):

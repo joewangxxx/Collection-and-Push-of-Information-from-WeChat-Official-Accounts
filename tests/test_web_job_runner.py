@@ -36,3 +36,44 @@ def test_runner_rejects_second_running_same_kind() -> None:
     assert first.status == "running"
     assert second.status == "rejected"
     assert "already running" in (second.error_message or "")
+
+
+class FakeHistoryStore:
+    def __init__(self):
+        self.created = []
+        self.started = []
+        self.succeeded = []
+        self.failed = []
+        self.logs = []
+
+    def create_job_run(self, kind, params=None):
+        from datetime import datetime
+        from market_info.web.services.job_runner import JobStatus
+
+        job = JobStatus(id="stored-1", kind=kind, status="running", created_at=datetime.now())
+        self.created.append((kind, params))
+        return job
+
+    def mark_job_started(self, job_id):
+        self.started.append(job_id)
+
+    def mark_job_succeeded(self, job_id, result=None):
+        self.succeeded.append((job_id, result))
+
+    def mark_job_failed(self, job_id, error_message):
+        self.failed.append((job_id, error_message))
+
+    def append_job_log(self, job_id, message):
+        self.logs.append((job_id, message))
+
+
+def test_runner_updates_history_store_on_success() -> None:
+    store = FakeHistoryStore()
+    runner = InMemoryJobRunner(run_inline=True, history_store=store)
+
+    job = runner.start_job("check_auth", lambda: "ok")
+
+    assert job.id == "stored-1"
+    assert store.created == [("check_auth", {})]
+    assert store.started == ["stored-1"]
+    assert store.succeeded == [("stored-1", "ok")]

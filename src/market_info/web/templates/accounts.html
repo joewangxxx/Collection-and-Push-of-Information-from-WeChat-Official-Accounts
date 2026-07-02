@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="hero-panel glass-panel">
+    <div class="hero-copy">
+      <p class="eyebrow">Configured sources</p>
+      <h2>公众号账号</h2>
+      <p>从配置文件同步账号，运营台只展示脱敏 fakeid 和本地抓取统计。</p>
+    </div>
+    <form method="post" action="/accounts/sync">
+      {{ ui.command_button("同步配置", None, "primary", "同步中") }}
+    </form>
+  </section>
+
+  {% if error_message %}
+    <section class="alert-panel glass-panel">
+      <p>账号列表暂时不可用。</p>
+      <p>{{ error_message }}</p>
+    </section>
+  {% endif %}
+
+  {% call ui.glass_panel("账号列表", "启停只影响后续抓取任务，不会删除历史文章") %}
+    {% if accounts %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>fakeid</th>
+              <th>状态</th>
+              <th>文章数</th>
+              <th>最近抓取</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for account in accounts %}
+              <tr>
+                <td>{{ account.name }}</td>
+                <td>{{ account.masked_fakeid }}</td>
+                <td>{{ ui.status_pill("启用" if account.enabled else "停用", "ok" if account.enabled else "neutral") }}</td>
+                <td>{{ account.article_count }}</td>
+                <td>{{ account.last_fetch_at or "" }}</td>
+                <td class="action-cell">
+                  {% if account.enabled %}
+                    <form method="post" action="/accounts/{{ account.id }}/disable">
+                      {{ ui.command_button("停用", None, "secondary", "处理中") }}
+                    </form>
+                  {% else %}
+                    <form method="post" action="/accounts/{{ account.id }}/enable">
+                      {{ ui.command_button("启用", None, "primary", "处理中") }}
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty-state">还没有账号记录。可以先从配置文件同步一次。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}

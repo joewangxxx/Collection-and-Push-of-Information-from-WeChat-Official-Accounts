@@ -7,6 +7,8 @@ from threading import Lock, Timer
 from typing import Any
 from uuid import uuid4
 
+from market_info.web.services import job_history_service
+
 
 JobState = str
 
@@ -25,8 +27,9 @@ class JobStatus:
 
 
 class InMemoryJobRunner:
-    def __init__(self, run_inline: bool = False) -> None:
+    def __init__(self, run_inline: bool = False, history_store=None) -> None:
         self.run_inline = run_inline
+        self.history_store = history_store
         self._jobs: dict[str, JobStatus] = {}
         self._lock = Lock()
 
@@ -48,15 +51,20 @@ class InMemoryJobRunner:
                 )
                 self._jobs[rejected.id] = rejected
                 return rejected
+            history_job = None
+            if self.history_store is not None:
+                history_job = self.history_store.create_job_run(kind, kwargs)
             job = JobStatus(
-                id=str(uuid4()),
+                id=history_job.id if history_job is not None else str(uuid4()),
                 kind=kind,
                 status="running",
-                created_at=datetime.now(),
+                created_at=history_job.created_at if history_job is not None else datetime.now(),
                 started_at=datetime.now(),
             )
             self._jobs[job.id] = job
 
+        if self.history_store is not None:
+            self.history_store.mark_job_started(job.id)
         if self.run_inline:
             self._run(job.id, target, kwargs)
         else:
@@ -78,25 +86,32 @@ class InMemoryJobRunner:
             job = self._jobs.get(job_id)
             if job is not None:
                 job.logs.append(message)
+        if self.history_store is not None:
+            self.history_store.append_job_log(job_id, message)
 
     def _run(self, job_id: str, target: Callable[..., object], kwargs: dict[str, object]) -> None:
         try:
             result = target(**kwargs)
         except Exception as exc:
+            error_message = " ".join(str(exc).split())
             with self._lock:
                 job = self._jobs[job_id]
                 job.status = "failed"
-                job.error_message = " ".join(str(exc).split())
+                job.error_message = error_message
                 job.finished_at = datetime.now()
+            if self.history_store is not None:
+                self.history_store.mark_job_failed(job_id, error_message)
             return
         with self._lock:
             job = self._jobs[job_id]
             job.status = "succeeded"
             job.result = result
             job.finished_at = datetime.now()
+        if self.history_store is not None:
+            self.history_store.mark_job_succeeded(job_id, result)
 
     def _has_running_kind(self, kind: str) -> bool:
         return any(job.kind == kind and job.status == "running" for job in self._jobs.values())
 
 
-job_runner = InMemoryJobRunner()
+job_runner = InMemoryJobRunner(history_store=job_history_service)

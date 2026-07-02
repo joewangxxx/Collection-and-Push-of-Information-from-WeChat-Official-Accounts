@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from scripts import smoke_extract_articles, smoke_ingest_account
+from scripts import smoke_extract_articles, smoke_ingest_account, smoke_web_console
 
 
 @pytest.mark.parametrize(
@@ -22,3 +22,12 @@ def test_smoke_scripts_reject_non_positive_limit(monkeypatch, module, argv) -> N
         module.parse_args()
 
     assert exc_info.value.code == 2
+
+
+def test_smoke_web_console_help_runs(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["smoke_web_console.py", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        smoke_web_console.parse_args()
+
+    assert exc_info.value.code == 0

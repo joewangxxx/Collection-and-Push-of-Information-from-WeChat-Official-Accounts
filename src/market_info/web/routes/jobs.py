@@ -8,10 +8,12 @@ from market_info.jobs.weekly_job import (
     process_pending_backlog,
     retry_failed_articles,
     run_weekly,
-    send_report,
 )
-from market_info.web.templating import templates
+from market_info.web.services.dashboard_service import mask_error
+from market_info.web.services.delivery_service import send_report_and_record
+from market_info.web.services.job_history_service import get_job_history, list_job_history
 from market_info.web.services.job_runner import job_runner
+from market_info.web.templating import templates
 
 
 router = APIRouter(prefix="/jobs")
@@ -19,6 +21,12 @@ router = APIRouter(prefix="/jobs")
 
 @router.get("")
 def jobs_page(request: Request):
+    error_message = ""
+    try:
+        jobs = list_job_history()
+    except Exception as exc:
+        jobs = job_runner.list_jobs()
+        error_message = mask_error(exc)
     return templates.TemplateResponse(
         name="jobs.html",
         request=request,
@@ -26,7 +34,9 @@ def jobs_page(request: Request):
             "request": request,
             "active_nav": "jobs",
             "page_title": "运行中心",
-            "jobs": job_runner.list_jobs(),
+            "jobs": jobs,
+            "running_jobs": job_runner.list_jobs(),
+            "error_message": error_message,
         },
     )
 
@@ -65,21 +75,25 @@ def start_retry_failed(article_ids: str = Form(...), include_exhausted: bool = F
 
 @router.post("/send-report")
 def start_send_report(excel_path: str = Form(...)):
-    job_runner.start_job("send_report", send_report, {"excel_path": Path(excel_path)})
+    job_runner.start_job("send_report", send_report_and_record, {"excel_path": Path(excel_path)})
     return RedirectResponse("/jobs", status_code=303)
 
 
 @router.get("/{job_id}")
 def job_detail(request: Request, job_id: str):
-    job = job_runner.get_job(job_id)
+    try:
+        job = get_job_history(job_id)
+    except Exception:
+        job = None
+    if job is None:
+        job = job_runner.get_job(job_id)
     return templates.TemplateResponse(
-        name="jobs.html",
+        name="job_detail.html",
         request=request,
         context={
             "request": request,
             "active_nav": "jobs",
-            "page_title": "运行中心",
-            "jobs": job_runner.list_jobs(),
-            "selected_job": job,
+            "page_title": "任务详情",
+            "job": job,
         },
     )

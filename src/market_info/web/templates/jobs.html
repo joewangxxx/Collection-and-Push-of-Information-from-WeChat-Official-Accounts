@@ -29,6 +29,13 @@
     </form>
   </section>
 
+  {% if error_message %}
+    <section class="alert-panel glass-panel">
+      <p>任务历史暂时不可用，已显示当前进程内的运行记录。</p>
+      <p>{{ error_message }}</p>
+    </section>
+  {% endif %}
+
   {% call ui.glass_panel("任务记录", "最近在本地运营台发起的任务") %}
     {% if jobs %}
       <div class="data-table-wrap">

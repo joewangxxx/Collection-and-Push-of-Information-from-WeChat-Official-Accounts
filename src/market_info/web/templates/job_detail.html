@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  {% call ui.glass_panel("任务详情", "持久化的运行状态、日志和错误信息") %}
+    {% if job %}
+      <dl class="detail-list">
+        <dt>ID</dt><dd>{{ job.id }}</dd>
+        <dt>任务</dt><dd>{{ job.kind }}</dd>
+        <dt>状态</dt><dd>{{ ui.status_pill(job.status, "ok" if job.status == "succeeded" else "danger" if job.status == "failed" else "amber") }}</dd>
+        <dt>创建时间</dt><dd>{{ job.created_at or "" }}</dd>
+        <dt>开始时间</dt><dd>{{ job.started_at or "" }}</dd>
+        <dt>结束时间</dt><dd>{{ job.finished_at or "" }}</dd>
+        <dt>错误</dt><dd>{{ job.error_message or "" }}</dd>
+      </dl>
+      {% if job.logs %}
+        <ul class="log-list">
+          {% for log in job.logs %}
+            <li>{{ log }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="empty-state">还没有日志。</p>
+      {% endif %}
+    {% else %}
+      <p class="empty-state">任务不存在或已经被清理。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}
