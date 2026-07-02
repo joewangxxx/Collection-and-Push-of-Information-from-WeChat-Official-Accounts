@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  {% if error_message %}
+    <section class="glass-panel alert-panel" aria-label="项目台账错误">
+      <p><strong>项目查询失败：</strong>{{ error_message }}</p>
+    </section>
+  {% endif %}
+
+  {% call ui.glass_panel("项目台账", "按项目名、企业、地区和状态检索沉淀项目") %}
+    <form class="filter-row project-filter" method="get" action="/projects">
+      <label>
+        项目或企业
+        <input class="field-input" name="q" type="text" value="{{ query }}">
+      </label>
+      <label>
+        省份
+        <input class="field-input" name="province" type="text" value="{{ selected_province }}">
+      </label>
+      <label>
+        状态
+        <input class="field-input" name="status" type="text" value="{{ selected_status }}">
+      </label>
+      {{ ui.command_button("筛选", None, "secondary", "筛选中") }}
+    </form>
+
+    {% if projects %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>项目</th>
+              <th>企业</th>
+              <th>地区</th>
+              <th>行业</th>
+              <th>市场</th>
+              <th>状态</th>
+              <th>投资额</th>
+              <th>最近发现</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for project in projects %}
+              <tr>
+                <td>{{ project.id }}</td>
+                <td><a href="/projects/{{ project.id }}">{{ project.project_name }}</a></td>
+                <td>{{ project.company_name }}</td>
+                <td>{{ project.province }} {{ project.city }}</td>
+                <td>{{ project.industry }}</td>
+                <td>{{ project.market }}</td>
+                <td>{{ ui.status_pill(project.status or "未知", "neutral") }}</td>
+                <td>{{ project.investment_amount_yi or "" }}</td>
+                <td>{{ project.last_seen_at or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty-state">没有匹配的项目。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}

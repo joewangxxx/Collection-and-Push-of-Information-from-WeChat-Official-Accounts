@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  {% call ui.glass_panel("周报文件", "仅展示 EXPORT_DIR 下的 .xlsx 文件") %}
+    {% if reports %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>文件名</th>
+              <th>大小</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for report in reports %}
+              <tr>
+                <td>{{ report.name }}</td>
+                <td>{{ report.size_bytes }} bytes</td>
+                <td>{{ report.modified_at }}</td>
+                <td class="action-cell">
+                  <a class="command-button command-secondary" href="/reports/{{ report.name }}/download">下载</a>
+                  <form method="post" action="/reports/{{ report.name }}/send">
+                    {{ ui.command_button("重新发送", None, "primary", "发送中") }}
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty-state">还没有 Excel 周报。运行一次周报任务后会出现在这里。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="metric-grid" aria-label="质量指标">
+    {% if overview.evaluation %}
+      {{ ui.metric_tile("项目精确率", "%.0f%%"|format(overview.evaluation.project_precision * 100), "precision", "blue") }}
+      {{ ui.metric_tile("项目召回率", "%.0f%%"|format(overview.evaluation.project_recall * 100), "recall", "blue") }}
+      {{ ui.metric_tile("字段准确率", "%.0f%%"|format(overview.evaluation.field_accuracy * 100), "field accuracy", "neutral") }}
+      {{ ui.metric_tile("去重准确率", "%.0f%%"|format(overview.evaluation.dedupe_accuracy * 100), "dedupe", "amber") }}
+    {% else %}
+      {{ ui.metric_tile("项目精确率", "-", "未生成评估报告", "neutral") }}
+      {{ ui.metric_tile("项目召回率", "-", "未生成评估报告", "neutral") }}
+      {{ ui.metric_tile("字段准确率", "-", "未生成评估报告", "neutral") }}
+      {{ ui.metric_tile("去重准确率", "-", "未生成评估报告", "neutral") }}
+    {% endif %}
+  </section>
+
+  <section class="detail-grid">
+    {% call ui.glass_panel("黄金测试集", "导出待标注样本，或运行已有 golden_labels.xlsx 的评估") %}
+      <dl class="detail-list">
+        <dt>标签文件</dt><dd>{{ overview.golden_assets.labels_path }}</dd>
+        <dt>标签状态</dt><dd>{{ "已存在" if overview.golden_assets.labels_exists else "未生成" }}</dd>
+        <dt>正文样本</dt><dd>{{ overview.golden_assets.article_body_count }}</dd>
+        <dt>评估报告</dt><dd>{{ "已存在" if overview.golden_assets.report_exists else "未生成" }}</dd>
+      </dl>
+      <form class="quality-action" method="post" action="/quality/export-golden">
+        <label>
+          导出数量
+          <input class="field-input" name="limit" type="number" min="1" value="20">
+        </label>
+        <input type="hidden" name="output_dir" value="{{ overview.golden_assets.base_dir }}">
+        {{ ui.command_button("导出黄金测试集", None, "secondary", "导出中") }}
+      </form>
+      <form class="quality-action" method="post" action="/quality/eval-golden">
+        <input type="hidden" name="labels_path" value="{{ overview.golden_assets.labels_path }}">
+        <input type="hidden" name="report_path" value="{{ overview.golden_assets.report_path }}">
+        {{ ui.command_button("运行质量评估", None, "primary", "评估中") }}
+      </form>
+    {% endcall %}
+
+    {% call ui.glass_panel("安全配置快照", "只显示是否配置，不显示密钥、密码和 webhook URL") %}
+      <div class="settings-grid">
+        {% for item in overview.config_items %}
+          <article class="setting-row">
+            <strong>{{ item.name }}</strong>
+            {{ ui.status_pill(item.status, "ok" if item.status == "configured" else "amber") }}
+            <span>{{ item.detail }}</span>
+          </article>
+        {% endfor %}
+      </div>
+    {% endcall %}
+  </section>
+{% endblock %}

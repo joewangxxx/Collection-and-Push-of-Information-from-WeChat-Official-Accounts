@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "components.html" as ui %}
+
+{% block content %}
+  <section class="hero-panel glass-panel">
+    <div>
+      <p class="eyebrow">System overview</p>
+      <h2>市场信息自动抓取运营台</h2>
+      <p class="hero-copy">查看系统状态、运行周报任务、处理失败文章，并下载最近生成的 Excel 周报。</p>
+    </div>
+    <div class="hero-actions">
+      {{ ui.status_pill(overview.wechat.label, "ok" if overview.wechat.ok else "danger") }}
+      {{ ui.status_pill(overview.database.label, "ok" if overview.database.ok else "danger") }}
+      {{ ui.command_button("运行任务", "/jobs", "primary") }}
+    </div>
+  </section>
+
+  {% if overview.wechat.detail or overview.database.detail %}
+    <section class="glass-panel alert-panel" aria-label="系统告警">
+      {% if overview.wechat.detail %}
+        <p><strong>微信服务：</strong>{{ overview.wechat.detail }}</p>
+      {% endif %}
+      {% if overview.database.detail %}
+        <p><strong>数据库：</strong>{{ overview.database.detail }}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="metric-grid" aria-label="核心指标">
+    {{ ui.metric_tile("待处理文章", overview.article_status.pending, "pending", "neutral") }}
+    {{ ui.metric_tile("可重试失败", overview.article_status.failed_retryable, "failed_retryable", "amber") }}
+    {{ ui.metric_tile("项目总数", overview.project_total, "projects", "blue") }}
+    {{ ui.metric_tile("待复核记录", overview.review_records, "review", "amber") }}
+  </section>
+
+  {% call ui.glass_panel("处理链路", "微信导出、文章入库、AI 抽取、项目沉淀、Excel 周报与邮件推送") %}
+    <div class="pipeline-lens">
+      <span>微信授权</span>
+      <span>文章抓取</span>
+      <span>AI 抽取</span>
+      <span>项目归档</span>
+      <span>Excel</span>
+      <span>邮件推送</span>
+    </div>
+  {% endcall %}
+
+  {% call ui.glass_panel("最近周报", "展示 EXPORT_DIR 下最新的 .xlsx 周报文件") %}
+    {% if overview.latest_report %}
+      <div class="report-highlight">
+        <strong>{{ overview.latest_report.name }}</strong>
+        <span>{{ overview.latest_report.size_bytes }} bytes</span>
+        <a class="command-button command-secondary" href="/reports/{{ overview.latest_report.name }}/download">下载</a>
+      </div>
+    {% else %}
+      <p class="empty-state">还没有生成 Excel 周报。运行一次周报任务后，文件会出现在这里。</p>
+    {% endif %}
+  {% endcall %}
+{% endblock %}
