@@ -29,6 +29,14 @@ def test_static_css_is_mounted() -> None:
     assert "--bg-canvas" in response.text
 
 
+def test_busy_button_script_waits_for_form_submit() -> None:
+    script = Path("src/market_info/web/static/app.js").read_text(encoding="utf-8")
+
+    assert 'document.addEventListener("submit"' in script
+    assert 'document.addEventListener("click", (event)' not in script
+    assert "处理中" in script
+
+
 def test_dashboard_shell_uses_design_system_classes() -> None:
     client = TestClient(create_app())
 

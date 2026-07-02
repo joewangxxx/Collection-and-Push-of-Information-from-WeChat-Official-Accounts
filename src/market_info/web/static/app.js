@@ -1,5 +1,9 @@
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-disable-on-click]");
+document.addEventListener("submit", (event) => {
+  const form = event.target;
+  const submitter = event.submitter;
+  const button = submitter?.matches("[data-disable-on-click]")
+    ? submitter
+    : form.querySelector("[data-disable-on-click]");
   if (!button) {
     return;
   }
@@ -7,5 +11,7 @@ document.addEventListener("click", (event) => {
   button.dataset.originalLabel = button.textContent.trim();
   button.textContent = busyLabel;
   button.setAttribute("aria-busy", "true");
-  button.setAttribute("disabled", "disabled");
+  window.requestAnimationFrame(() => {
+    button.setAttribute("disabled", "disabled");
+  });
 });

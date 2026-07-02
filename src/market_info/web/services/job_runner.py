@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Lock, Timer
 from typing import Any
 from uuid import uuid4
@@ -46,7 +46,7 @@ class InMemoryJobRunner:
                     id=str(uuid4()),
                     kind=kind,
                     status="rejected",
-                    created_at=datetime.now(),
+                    created_at=_utc_now(),
                     error_message=f"{kind} is already running",
                 )
                 self._jobs[rejected.id] = rejected
@@ -58,8 +58,8 @@ class InMemoryJobRunner:
                 id=history_job.id if history_job is not None else str(uuid4()),
                 kind=kind,
                 status="running",
-                created_at=history_job.created_at if history_job is not None else datetime.now(),
-                started_at=datetime.now(),
+                created_at=history_job.created_at if history_job is not None else _utc_now(),
+                started_at=_utc_now(),
             )
             self._jobs[job.id] = job
 
@@ -79,7 +79,7 @@ class InMemoryJobRunner:
 
     def list_jobs(self) -> list[JobStatus]:
         with self._lock:
-            return sorted(self._jobs.values(), key=lambda job: job.created_at, reverse=True)
+            return sorted(self._jobs.values(), key=lambda job: _sort_datetime(job.created_at), reverse=True)
 
     def append_log(self, job_id: str, message: str) -> None:
         with self._lock:
@@ -98,7 +98,7 @@ class InMemoryJobRunner:
                 job = self._jobs[job_id]
                 job.status = "failed"
                 job.error_message = error_message
-                job.finished_at = datetime.now()
+                job.finished_at = _utc_now()
             if self.history_store is not None:
                 self.history_store.mark_job_failed(job_id, error_message)
             return
@@ -106,12 +106,22 @@ class InMemoryJobRunner:
             job = self._jobs[job_id]
             job.status = "succeeded"
             job.result = result
-            job.finished_at = datetime.now()
+            job.finished_at = _utc_now()
         if self.history_store is not None:
             self.history_store.mark_job_succeeded(job_id, result)
 
     def _has_running_kind(self, kind: str) -> bool:
         return any(job.kind == kind and job.status == "running" for job in self._jobs.values())
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _sort_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 job_runner = InMemoryJobRunner(history_store=job_history_service)
